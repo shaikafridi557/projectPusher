@@ -4,8 +4,7 @@ from utils.repo_utils import create_repo_from_zip, get_user_repos
 from dotenv import load_dotenv
 import os
 
-# --- NEW LINE TO FIX DEPLOYMENT ---
-# This import is needed for the fix.
+# This is the "middleware" that should fix the http vs https problem.
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Step 1: Load all the secret keys from your .env file
@@ -14,19 +13,16 @@ load_dotenv()
 # Step 2: Create the Flask application
 app = Flask(__name__)
 
-# --- NEW, IMPORTANT FIX FOR DEPLOYMENT ---
-# This is the second required line. It tells your app to be smart
-# about its address when it's running on a real server like Render.
+# Apply the ProxyFix middleware to the Flask app.
+# This tells our app to trust the headers from our hosting service (Render).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Step 3: Set a permanent secret key for the session
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 
-# Check if the secret key was loaded correctly. The app cannot run without it.
 if not app.secret_key:
     raise ValueError("No FLASK_SECRET_KEY set in the .env file. Please generate one and add it.")
 
-# Allow the app to work on http:// for local development
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 # Step 4: Configure the GitHub OAuth login
@@ -37,6 +33,23 @@ github_bp = make_github_blueprint(
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
+
+
+# --- THIS IS THE NEW DEBUGGING CODE ---
+@app.before_request
+def before_request_func():
+    # This code runs before every single request to your application.
+    # We will check if the user is trying to go to the GitHub login page.
+    if request.path == "/login/github":
+        # If they are, we will generate the full callback URL that Flask-Dance
+        # is about to send to GitHub and we will print it to our server logs.
+        # This will show us the EXACT URL we need to put in our GitHub settings.
+        full_callback_url = url_for('github.login', _external=True)
+        print("**************************************************")
+        print("*****             DEBUGGING URL              *****")
+        print(f"***** The exact redirect_uri is: {full_callback_url}")
+        print("**************************************************")
+# --- END OF DEBUGGING CODE ---
 
 
 # --- Application Routes ---
