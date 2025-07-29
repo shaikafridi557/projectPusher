@@ -4,14 +4,22 @@ from utils.repo_utils import create_repo_from_zip, get_user_repos
 from dotenv import load_dotenv
 import os
 
+# --- NEW LINE TO FIX DEPLOYMENT ---
+# This import is needed for the fix.
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 # Step 1: Load all the secret keys from your .env file
 load_dotenv()
 
 # Step 2: Create the Flask application
 app = Flask(__name__)
 
+# --- NEW, IMPORTANT FIX FOR DEPLOYMENT ---
+# This is the second required line. It tells your app to be smart
+# about its address when it's running on a real server like Render.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # Step 3: Set a permanent secret key for the session
-# This is a critical fix to ensure your login session is not lost after a server restart.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 
 # Check if the secret key was loaded correctly. The app cannot run without it.
@@ -25,9 +33,7 @@ os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 github_bp = make_github_blueprint(
     client_id=os.environ.get("GITHUB_CLIENT_ID"),
     client_secret=os.environ.get("GITHUB_CLIENT_SECRET"),
-    # The "scope" tells GitHub what permissions we need. "repo" gives access to repositories.
     scope="repo",
-    # After login, GitHub will send the user to the 'github_login' route below.
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
@@ -39,74 +45,50 @@ app.register_blueprint(github_bp, url_prefix="/login")
 def home():
     """The main page. It shows the login button or redirects to the dashboard."""
     if not github.authorized:
-        # If the user is not logged in, show them the login.html page
         return render_template("login.html")
-    
-    # If the user is already logged in, send them directly to the dashboard
     return redirect(url_for("dashboard"))
 
 @app.route("/github_login")
 def github_login():
     """This route is called by GitHub after a successful login."""
     if not github.authorized:
-        # If for some reason the login failed, show an error.
         return "GitHub login failed.", 401
-
-    # Fetch the user's GitHub profile information
     resp = github.get("/user")
     if not resp.ok:
         return "Failed to fetch user information from GitHub.", 401
-
-    # Store the user's profile in the session so we remember them
     session["github_user"] = resp.json()
-    
-    # Redirect to the main dashboard page
     return redirect(url_for("dashboard"))
 
 @app.route("/dashboard")
 def dashboard():
     """The main dashboard page, shown after a successful login."""
-    # Protect this page: if the user isn't logged in, send them back to the home page.
     if not github.authorized or "github_user" not in session:
         return redirect(url_for("home"))
-
-    # Get the user's access token from the session and fetch their repos
     access_token = github.token["access_token"]
     repos = get_user_repos(access_token)
-    
-    # Render the index.html template with the user's info and list of repos
     return render_template("dashboard.html", user=session["github_user"], repos=repos)
 
-#
-# --- THIS IS THE FULLY CORRECTED UPLOAD FUNCTION ---
-#
 @app.route("/upload", methods=["POST"])
 def upload():
     """Handles the project zip file upload and repository creation."""
-    # Protect this route: user must be logged in.
     if "github_user" not in session:
         return redirect(url_for("home"))
     
-    # Get the file and the repository NAME from the HTML form.
     project_file = request.files.get("project")
     repo_name = request.form.get("repo_name")
     
-    # Basic validation to make sure we received the file and name.
     if not project_file or not repo_name:
         return render_error_page("Missing project zip file or repository name.")
     
     if not project_file.filename.lower().endswith('.zip'):
         return render_error_page("Invalid file type. Please upload a .zip file.")
     
-    # Get the user's access token to authorize the API call.
     access_token = github.token["access_token"]
     
-    # Call the function with arguments in the correct order:
     result = create_repo_from_zip(access_token, project_file, repo_name)
     
-    # Display a success or failure message based on the result from the function.
     if result.get("success"):
-        return render_success_page(result['repo_url'], repo_name)
+        return render_success_page(result['repo_url'], result['repo_name'])
     else:
         return render_error_page(result.get('error'))
 
@@ -543,15 +525,13 @@ def render_error_page(error_message):
     </body>
     </html>
     '''
+
 @app.route("/logout")
 def logout():
     """Logs the user out by clearing the session."""
     session.clear()
     return redirect(url_for("home"))
 
-
 # --- Run the App ---
 if __name__ == '__main__':
-    # debug=True enables the reloader, which is useful for development.
-    # The login will now work correctly even with the reloader active.
     app.run(debug=True, port=5000)
