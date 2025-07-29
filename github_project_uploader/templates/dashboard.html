@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Uploader - Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <div class="user-info">
+                    {% if user %}
+                        <div class="avatar-container">
+                            <img src="{{ user.avatar_url }}" alt="GitHub Avatar" class="user-avatar">
+                            <div class="status-indicator"></div>
+                        </div>
+                        <div class="user-details">
+                            <h2 class="user-name">{{ user.name }}</h2>
+                            <p class="user-handle">@{{ user.login }}</p>
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="header-actions">
+                    <button class="notification-btn">
+                        <i class="fas fa-bell"></i>
+                        <span class="notification-badge">3</span>
+                    </button>
+                    <a href="/logout" class="logout-btn">
+                        <i class="fas fa-sign-out-alt"></i>
+                        <span>Logout</span>
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dashboard Overview -->
+        <section class="dashboard-overview">
+            <h1 class="page-title">
+                <i class="fab fa-github"></i>
+                Dashboard Overview
+            </h1>
+            <div class="stats-grid">
+                <div class="stat-card primary">
+                    <div class="stat-icon">
+                        <i class="fas fa-code-branch"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-number">{{ repos | length }}</h3>
+                        <p class="stat-label">Total Repositories</p>
+                        <span class="stat-change positive">
+                            <i class="fas fa-arrow-up"></i> +2 this week
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="stat-card success">
+                    <div class="stat-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-number">Active</h3>
+                        <p class="stat-label">Upload Tool</p>
+                        <span class="stat-change">
+                            <i class="fas fa-check-circle"></i> Ready to use
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="stat-card info">
+                    <div class="stat-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-number">Soon</h3>
+                        <p class="stat-label">Analytics</p>
+                        <span class="stat-change">
+                            <i class="fas fa-clock"></i> Coming soon
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="stat-card warning">
+                    <div class="stat-icon">
+                        <i class="fas fa-star"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-number">247</h3>
+                        <p class="stat-label">Total Stars</p>
+                        <span class="stat-change positive">
+                            <i class="fas fa-arrow-up"></i> +12 today
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Content Grid -->
+        <div class="main-grid">
+            <!-- Upload Section -->
+            <section class="upload-section">
+                <div class="section-header">
+                    <h2>
+                        <i class="fas fa-upload"></i>
+                        Upload New Project
+                    </h2>
+                    <p>Create a new repository from your local project</p>
+                </div>
+
+                <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+                    <div class="form-group">
+                        <label for="project-file">
+                            <i class="fas fa-file-archive"></i>
+                            Project ZIP File
+                        </label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="project-file" name="project" accept=".zip" required>
+                            <div class="file-input-display">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <span>Choose file or drag here</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="repo_name">
+                            <i class="fas fa-tag"></i>
+                            Repository Name
+                        </label>
+                        <input type="text" id="repo_name" name="repo_name" placeholder="e.g., my-awesome-project" required>
+                    </div>
+
+                    <button type="submit" class="submit-btn">
+                        <i class="fas fa-rocket"></i>
+                        <span>Create & Upload</span>
+                    </button>
+                </form>
+            </section>
+
+            <!-- Chart Section -->
+            <section class="chart-section">
+                <div class="section-header">
+                    <h2>
+                        <i class="fas fa-chart-pie"></i>
+                        Repository Analytics
+                    </h2>
+                    <div class="chart-controls">
+                        <button class="chart-btn active" data-chart="commits">Commits</button>
+                        <button class="chart-btn" data-chart="languages">Languages</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="repoChart"></canvas>
+                </div>
+            </section>
+        </div>
+
+        <!-- Repositories Grid -->
+        <section class="repositories-section">
+            <div class="section-header">
+                <h2>
+                    <i class="fas fa-folder-open"></i>
+                    Your Repositories
+                </h2>
+                <div class="repo-actions">
+                    <button class="filter-btn">
+                        <i class="fas fa-filter"></i>
+                        Filter
+                    </button>
+                    <button class="sort-btn">
+                        <i class="fas fa-sort"></i>
+                        Sort by updated
+                    </button>
+                </div>
+            </div>
+            
+            {% if repos %}
+                <div class="repo-grid">
+                    {% for repo in repos %}
+                        <div class="repo-card">
+                            <div class="repo-header">
+                                <div class="repo-icon">
+                                    <i class="fas fa-code"></i>
+                                </div>
+                                <div class="repo-status">
+                                    <span class="status-dot active"></span>
+                                </div>
+                            </div>
+                            <div class="repo-content">
+                                <h4 class="repo-name">{{ repo.name }}</h4>
+                                <p class="repo-description">{{ repo.description or "No description available" }}</p>
+                                <div class="repo-stats">
+                                    <span class="stat">
+                                        <i class="fas fa-star"></i>
+                                        {{ repo.stargazers_count or 0 }}
+                                    </span>
+                                    <span class="stat">
+                                        <i class="fas fa-code-branch"></i>
+                                        {{ repo.forks_count or 0 }}
+                                    </span>
+                                    <span class="language">{{ repo.language or "Unknown" }}</span>
+                                </div>
+                            </div>
+                            <div class="repo-actions">
+                                <a href="{{ repo.html_url }}" target="_blank" class="repo-link">
+                                    <i class="fab fa-github"></i>
+                                    View
+                                </a>
+                                <button class="repo-btn">
+                                    <i class="fas fa-ellipsis-h"></i>
+                                </button>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <i class="fas fa-folder-open"></i>
+                    </div>
+                    <h3>No repositories found</h3>
+                    <p>Start by uploading your first project using the upload tool above.</p>
+                </div>
+            {% endif %}
+        </section>
+
+        <!-- Git Commands Section -->
+        <section class="git-commands-section">
+            <div class="section-header">
+                <h2>
+                    <i class="fas fa-terminal"></i>
+                    Essential Git Commands
+                </h2>
+                <button class="expand-btn">
+                    <i class="fas fa-expand-alt"></i>
+                </button>
+            </div>
+            <div class="commands-grid">
+                <div class="command-card">
+                    <div class="command-icon">
+                        <i class="fas fa-download"></i>
+                    </div>
+                    <h4>Clone Repository</h4>
+                    <code>git clone [repository-url]</code>
+                    <p>Download a repository to your local machine</p>
+                </div>
+                <div class="command-card">
+                    <div class="command-icon">
+                        <i class="fas fa-upload"></i>
+                    </div>
+                    <h4>Push Changes</h4>
+                    <code>git add . && git commit -m "message" && git push</code>
+                    <p>Stage, commit, and push your changes</p>
+                </div>
+                <div class="command-card">
+                    <div class="command-icon">
+                        <i class="fas fa-info-circle"></i>
+                    </div>
+                    <h4>Check Status</h4>
+                    <code>git status</code>
+                    <p>View the current state of your repository</p>
+                </div>
+                <div class="command-card">
+                    <div class="command-icon">
+                        <i class="fas fa-code-branch"></i>
+                    </div>
+                    <h4>Create Branch</h4>
+                    <code>git checkout -b feature-name</code>
+                    <p>Create and switch to a new branch</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // Chart.js configuration
+        const ctx = document.getElementById('repoChart').getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.8)');
+        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.1)');
+
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['JavaScript', 'Python', 'CSS', 'HTML', 'Other'],
+                datasets: [{
+                    data: [35, 25, 20, 15, 5],
+                    backgroundColor: [
+                        '#6366f1',
+                        '#10b981',
+                        '#f59e0b',
+                        '#ef4444',
+                        '#8b5cf6'
+                    ],
+                    borderWidth: 0,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            usePointStyle: true,
+                            font: {
+                                family: 'Inter',
+                                size: 12
+                            }
+                        }
+                    }
+                },
+                cutout: '70%'
+            }
+        });
+
+        // File input enhancement
+        const fileInput = document.getElementById('project-file');
+        const fileDisplay = document.querySelector('.file-input-display span');
+        
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                fileDisplay.textContent = e.target.files[0].name;
+            }
+        });
+
+        // Chart controls
+        document.querySelectorAll('.chart-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# requirements.txt
+Flask
+Flask-Dance
+python-dotenv
+requests
+gunicorn
+GitPython
