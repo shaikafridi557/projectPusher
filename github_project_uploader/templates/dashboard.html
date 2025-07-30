@@ -4,10 +4,99 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitHub Uploader - Dashboard</title>
+    <!-- Assuming your main CSS file is in static/css/style.css -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* --- Base Styles From Your Original Code --- */
+        .repo-name a {
+            color: inherit; text-decoration: none;
+            transition: color 0.3s ease; font-weight: 600;
+        }
+        .repo-name a:hover { color: var(--primary-color); text-decoration: underline; }
+        .instruction-card {
+            background: linear-gradient(135deg, #4338ca, #6366f1); color: white;
+            border-radius: var(--radius-xl); padding: var(--spacing-xl);
+            margin-bottom: var(--spacing-xl); display: flex; align-items: center;
+            gap: var(--spacing-xl); box-shadow: var(--shadow-lg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .instruction-icon { font-size: 48px; opacity: 0.7; }
+        .instruction-content h3 { font-size: 20px; font-weight: 600; margin: 0 0 var(--spacing-sm) 0; }
+        .instruction-content p { font-size: 14px; opacity: 0.9; margin: 0; line-height: 1.6; max-width: 600px; }
+        .instruction-content p strong { font-weight: 600; background-color: rgba(255, 255, 255, 0.15); padding: 2px 8px; border-radius: 6px; }
+        
+        /* --- Styles For The Delete Modal --- */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal-content {
+            background: white; padding: var(--spacing-xl); border-radius: var(--radius-xl);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); width: 100%; max-width: 450px; text-align: center;
+            transform: scale(0.95); transition: transform 0.3s ease;
+        }
+        .modal-overlay.active .modal-content { transform: scale(1); }
+        .modal-icon { font-size: 48px; color: var(--danger-color); margin-bottom: var(--spacing-lg); }
+        .modal-title { font-size: 20px; font-weight: 600; margin-bottom: var(--spacing-md); color: var(--text-primary); }
+        .modal-text { color: var(--text-secondary); margin-bottom: var(--spacing-lg); line-height: 1.6; }
+        .modal-text strong { color: var(--text-primary); background-color: var(--gray-100); padding: 2px 6px; border-radius: 4px; }
+        .modal-actions { display: flex; justify-content: center; gap: var(--spacing-md); }
+        .modal-btn { padding: 0.7rem 1.4rem; border: none; border-radius: var(--radius-md); font-weight: 600; cursor: pointer; font-size: 14px; }
+        .btn-cancel { background-color: var(--bg-secondary); border: 1px solid var(--gray-200); color: var(--text-secondary); }
+        .btn-confirm-delete { background-color: var(--danger-color); color: white; }
+
+        /* --- Styles For Interactive Data Table --- */
+        .repo-table-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-lg); }
+        .search-bar-wrapper { position: relative; width: 100%; max-width: 450px; }
+        .search-bar-wrapper .fa-search { position: absolute; top: 50%; left: 15px; transform: translateY(-50%); color: var(--text-secondary); }
+        #repo-search-bar {
+            width: 100%; padding: 12px 20px 12px 40px; border: 1px solid var(--gray-200); border-radius: var(--radius-md);
+            font-size: 14px; background-color: var(--bg-secondary); transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        #repo-search-bar:focus { outline: none; background-color: white; border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+        .repo-table-container { overflow-x: auto; background: white; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); border: 1px solid var(--gray-200); }
+        .repo-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .repo-table th, .repo-table td { padding: 16px 20px; text-align: left; border-bottom: 1px solid var(--gray-200); white-space: nowrap; }
+        .repo-table th { background-color: var(--bg-secondary); font-weight: 600; color: var(--text-primary); cursor: pointer; user-select: none; }
+        .repo-table th .sort-indicator { margin-left: 8px; color: var(--text-secondary); opacity: 0.5; transition: opacity 0.3s ease; }
+        .repo-table th.sorted .sort-indicator { opacity: 1; color: var(--primary-color); }
+        .repo-table tbody tr:last-child td { border-bottom: none; }
+        .repo-table tbody tr:hover { background-color: #f9fafb; }
+        .language-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; background-color: var(--text-secondary); }
+        .repo-table .repo-actions-cell { display: flex; align-items: center; gap: 10px; }
+        .repo-table .action-btn {
+            background: transparent; border: 1px solid var(--gray-300); color: var(--text-secondary); padding: 6px 12px;
+            border-radius: var(--radius-md); cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;
+        }
+        .repo-table .action-btn.delete-btn { color: var(--danger-color); border-color: var(--danger-color); }
+        .repo-table .action-btn:hover { background-color: var(--bg-secondary); border-color: var(--primary-color); color: var(--primary-color); }
+        .repo-table .action-btn.delete-btn:hover { background-color: var(--danger-color); color: white; border-color: var(--danger-color); }
+        .pagination-controls { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background-color: var(--bg-secondary); border-top: 1px solid var(--gray-200); font-size: 14px; }
+        .pagination-buttons { display: flex; }
+        .pagination-btn {
+            background: white; border: 1px solid var(--gray-300); color: var(--text-primary);
+            padding: 8px 14px; margin: 0 4px; border-radius: var(--radius-md); cursor: pointer; transition: all 0.2s ease;
+        }
+        .pagination-btn:hover:not(:disabled) { background-color: var(--primary-color); color: white; border-color: var(--primary-color); }
+        .pagination-btn.active { background-color: var(--primary-color); color: white; border-color: var(--primary-color); font-weight: 600; }
+        .pagination-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        #page-info { color: var(--text-secondary); }
+
+        /* --- Style for new full-width chart section --- */
+        .chart-section.full-width {
+            grid-column: 1 / -1; /* Make this section span the full width of the grid */
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -21,7 +110,7 @@
                             <div class="status-indicator"></div>
                         </div>
                         <div class="user-details">
-                            <h2 class="user-name">{{ user.name }}</h2>
+                            <h2 class="user-name">{{ user.name or user.login }}</h2>
                             <p class="user-handle">@{{ user.login }}</p>
                         </div>
                     {% endif %}
@@ -39,62 +128,36 @@
             </div>
         </header>
 
-        <!-- Dashboard Overview -->
+        <!-- Dashboard Overview with Dynamic Stats -->
         <section class="dashboard-overview">
-            <h1 class="page-title">
-                <i class="fab fa-github"></i>
-                Dashboard Overview
-            </h1>
+            <h1 class="page-title"><i class="fab fa-github"></i> Dashboard Overview</h1>
             <div class="stats-grid">
                 <div class="stat-card primary">
-                    <div class="stat-icon">
-                        <i class="fas fa-code-branch"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-code-branch"></i></div>
                     <div class="stat-content">
                         <h3 class="stat-number">{{ repos | length }}</h3>
                         <p class="stat-label">Total Repositories</p>
-                        <span class="stat-change positive">
-                            <i class="fas fa-arrow-up"></i> +2 this week
-                        </span>
                     </div>
                 </div>
-                
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-cloud-upload-alt"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 class="stat-number">Active</h3>
-                        <p class="stat-label">Upload Tool</p>
-                        <span class="stat-change">
-                            <i class="fas fa-check-circle"></i> Ready to use
-                        </span>
-                    </div>
-                </div>
-                
-                <div class="stat-card info">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 class="stat-number">Soon</h3>
-                        <p class="stat-label">Analytics</p>
-                        <span class="stat-change">
-                            <i class="fas fa-clock"></i> Coming soon
-                        </span>
-                    </div>
-                </div>
-                
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-star"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-star"></i></div>
                     <div class="stat-content">
-                        <h3 class="stat-number">247</h3>
+                        <h3 class="stat-number" id="total-stars-stat">...</h3>
                         <p class="stat-label">Total Stars</p>
-                        <span class="stat-change positive">
-                            <i class="fas fa-arrow-up"></i> +12 today
-                        </span>
+                    </div>
+                </div>
+                <div class="stat-card info">
+                    <div class="stat-icon"><i class="fas fa-fire"></i></div>
+                    <div class="stat-content">
+                        <h3 class="stat-number" id="top-language-stat">...</h3>
+                        <p class="stat-label">Top Language</p>
+                    </div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                    <div class="stat-content">
+                        <h3 class="stat-number">Ready</h3>
+                        <p class="stat-label">System Status</p>
                     </div>
                 </div>
             </div>
@@ -105,19 +168,12 @@
             <!-- Upload Section -->
             <section class="upload-section">
                 <div class="section-header">
-                    <h2>
-                        <i class="fas fa-upload"></i>
-                        Upload New Project
-                    </h2>
+                    <h2><i class="fas fa-upload"></i> Upload New Project</h2>
                     <p>Create a new repository from your local project</p>
                 </div>
-
                 <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
                     <div class="form-group">
-                        <label for="project-file">
-                            <i class="fas fa-file-archive"></i>
-                            Project ZIP File
-                        </label>
+                        <label for="project-file"><i class="fas fa-file-archive"></i> Project ZIP File</label>
                         <div class="file-input-wrapper">
                             <input type="file" id="project-file" name="project" accept=".zip" required>
                             <div class="file-input-display">
@@ -126,103 +182,90 @@
                             </div>
                         </div>
                     </div>
-
                     <div class="form-group">
-                        <label for="repo_name">
-                            <i class="fas fa-tag"></i>
-                            Repository Name
-                        </label>
+                        <label for="repo_name"><i class="fas fa-tag"></i> Repository Name</label>
                         <input type="text" id="repo_name" name="repo_name" placeholder="e.g., my-awesome-project" required>
                     </div>
-
-                    <button type="submit" class="submit-btn">
-                        <i class="fas fa-rocket"></i>
-                        <span>Create & Upload</span>
-                    </button>
+                    <button type="submit" class="submit-btn"><i class="fas fa-rocket"></i><span>Create & Upload</span></button>
                 </form>
             </section>
 
-            <!-- Chart Section -->
+            <!-- Language Chart Section -->
             <section class="chart-section">
                 <div class="section-header">
-                    <h2>
-                        <i class="fas fa-chart-pie"></i>
-                        Repository Analytics
-                    </h2>
-                    <div class="chart-controls">
-                        <button class="chart-btn active" data-chart="commits">Commits</button>
-                        <button class="chart-btn" data-chart="languages">Languages</button>
-                    </div>
+                    <h2><i class="fas fa-chart-pie"></i> Language Distribution</h2>
                 </div>
-                <div class="chart-container">
-                    <canvas id="repoChart"></canvas>
-                </div>
+                <div class="chart-container"><canvas id="language-chart"></canvas></div>
             </section>
         </div>
 
-        <!-- Repositories Grid -->
+        <!-- NEW Full-Width Commit History Chart -->
+        <section class="chart-section full-width">
+            <div class="section-header">
+                <h2><i class="fas fa-chart-line"></i> Yearly Commit Activity</h2>
+            </div>
+            <div class="chart-container" style="height: 300px;">
+                <canvas id="commit-history-chart"></canvas>
+            </div>
+        </section>
+
+        <!-- Elegant Instruction Card -->
+        <section class="instruction-card">
+            <div class="instruction-icon"><i class="fas fa-mouse-pointer"></i></div>
+            <div class="instruction-content">
+                <h3>Manage Your Projects in the Web Editor</h3>
+                <p>To edit, add new files, or create new folders, simply <strong>click on a repository name</strong> in the list below to open the File Explorer.</p>
+            </div>
+        </section>
+
+        <!-- Repositories Section - Interactive Data Table -->
         <section class="repositories-section">
             <div class="section-header">
-                <h2>
-                    <i class="fas fa-folder-open"></i>
-                    Your Repositories
-                </h2>
-                <div class="repo-actions">
-                    <button class="filter-btn">
-                        <i class="fas fa-filter"></i>
-                        Filter
-                    </button>
-                    <button class="sort-btn">
-                        <i class="fas fa-sort"></i>
-                        Sort by updated
-                    </button>
-                </div>
+                <h2><i class="fas fa-folder-open"></i> Your Repositories</h2>
             </div>
             
             {% if repos %}
-                <div class="repo-grid">
-                    {% for repo in repos %}
-                        <div class="repo-card">
-                            <div class="repo-header">
-                                <div class="repo-icon">
-                                    <i class="fas fa-code"></i>
-                                </div>
-                                <div class="repo-status">
-                                    <span class="status-dot active"></span>
-                                </div>
-                            </div>
-                            <div class="repo-content">
-                                <h4 class="repo-name">{{ repo.name }}</h4>
-                                <p class="repo-description">{{ repo.description or "No description available" }}</p>
-                                <div class="repo-stats">
-                                    <span class="stat">
-                                        <i class="fas fa-star"></i>
-                                        {{ repo.stargazers_count or 0 }}
-                                    </span>
-                                    <span class="stat">
-                                        <i class="fas fa-code-branch"></i>
-                                        {{ repo.forks_count or 0 }}
-                                    </span>
-                                    <span class="language">{{ repo.language or "Unknown" }}</span>
-                                </div>
-                            </div>
-                            <div class="repo-actions">
-                                <a href="{{ repo.html_url }}" target="_blank" class="repo-link">
-                                    <i class="fab fa-github"></i>
-                                    View
-                                </a>
-                                <button class="repo-btn">
-                                    <i class="fas fa-ellipsis-h"></i>
-                                </button>
-                            </div>
-                        </div>
-                    {% endfor %}
+                <div class="repo-table-controls">
+                    <div class="search-bar-wrapper">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="repo-search-bar" placeholder="Search by name or description...">
+                    </div>
                 </div>
+                <div class="repo-table-container">
+                    <table class="repo-table" id="repo-table">
+                        <thead>
+                            <tr>
+                                <th data-sort="name">Repository Name</th>
+                                <th data-sort="description">Description</th>
+                                <th data-sort="language">Language</th>
+                                <th data-sort="stars" data-type="number">Stars</th>
+                                <th data-sort="updated" data-type="date">Last Updated</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="repo-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="pagination-controls" id="pagination-controls"></div>
+                
+                <template id="repo-row-template">
+                    {% for repo in repos %}
+                    <tr data-name="{{ repo.name | lower }}" data-description="{{ repo.description | lower if repo.description else '' }}" data-language="{{ repo.language | lower if repo.language else 'unknown' }}" data-stars="{{ repo.stargazers_count or 0 }}" data-updated="{{ repo.updated_at }}">
+                        <td class="repo-name"><a href="{{ url_for('view_repository', repo_name=repo.name) }}">{{ repo.name }}</a></td>
+                        <td>{{ repo.description or "No description available" }}</td>
+                        <td><span class="language-dot" data-language="{{ repo.language | lower if repo.language else 'unknown' }}"></span>{{ repo.language or "N/A" }}</td>
+                        <td>{{ repo.stargazers_count or 0 }}</td>
+                        <td>{{ repo.updated_at }}</td>
+                        <td class="repo-actions-cell">
+                            <a href="{{ repo.html_url }}" target="_blank" class="action-btn"><i class="fab fa-github"></i><span>GitHub</span></a>
+                            <button class="action-btn delete-btn" onclick="openDeleteModal('{{ repo.name }}')"><i class="fas fa-trash-alt"></i><span>Delete</span></button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </template>
             {% else %}
                 <div class="empty-state">
-                    <div class="empty-icon">
-                        <i class="fas fa-folder-open"></i>
-                    </div>
+                    <div class="empty-icon"><i class="fas fa-folder-open"></i></div>
                     <h3>No repositories found</h3>
                     <p>Start by uploading your first project using the upload tool above.</p>
                 </div>
@@ -232,112 +275,294 @@
         <!-- Git Commands Section -->
         <section class="git-commands-section">
             <div class="section-header">
-                <h2>
-                    <i class="fas fa-terminal"></i>
-                    Essential Git Commands
-                </h2>
-                <button class="expand-btn">
-                    <i class="fas fa-expand-alt"></i>
-                </button>
+                <h2><i class="fas fa-terminal"></i> Essential Git Commands</h2>
+                <button class="expand-btn"><i class="fas fa-expand-alt"></i></button>
             </div>
             <div class="commands-grid">
                 <div class="command-card">
-                    <div class="command-icon">
-                        <i class="fas fa-download"></i>
-                    </div>
-                    <h4>Clone Repository</h4>
-                    <code>git clone [repository-url]</code>
-                    <p>Download a repository to your local machine</p>
+                    <div class="command-icon"><i class="fas fa-download"></i></div>
+                    <h4>Clone Repository</h4><code>git clone [url]</code><p>Download a repository</p>
                 </div>
                 <div class="command-card">
-                    <div class="command-icon">
-                        <i class="fas fa-upload"></i>
-                    </div>
-                    <h4>Push Changes</h4>
-                    <code>git add . && git commit -m "message" && git push</code>
-                    <p>Stage, commit, and push your changes</p>
+                    <div class="command-icon"><i class="fas fa-upload"></i></div>
+                    <h4>Push Changes</h4><code>git push</code><p>Upload local commits</p>
                 </div>
                 <div class="command-card">
-                    <div class="command-icon">
-                        <i class="fas fa-info-circle"></i>
-                    </div>
-                    <h4>Check Status</h4>
-                    <code>git status</code>
-                    <p>View the current state of your repository</p>
+                    <div class="command-icon"><i class="fas fa-info-circle"></i></div>
+                    <h4>Check Status</h4><code>git status</code><p>View repository state</p>
                 </div>
                 <div class="command-card">
-                    <div class="command-icon">
-                        <i class="fas fa-code-branch"></i>
-                    </div>
-                    <h4>Create Branch</h4>
-                    <code>git checkout -b feature-name</code>
-                    <p>Create and switch to a new branch</p>
+                    <div class="command-icon"><i class="fas fa-code-branch"></i></div>
+                    <h4>Create Branch</h4><code>git checkout -b [name]</code><p>Create a new branch</p>
                 </div>
             </div>
         </section>
     </div>
 
-    <script>
-        // Chart.js configuration
-        const ctx = document.getElementById('repoChart').getContext('2d');
-        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.8)');
-        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.1)');
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <h3 class="modal-title">Are you absolutely sure?</h3>
+            <p class="modal-text">This will permanently delete the <strong id="repo-to-delete-name"></strong> repository and all its associated data.</p>
+            <div class="modal-actions">
+                <button class="modal-btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+                <form id="delete-repo-form" action="" method="post" style="display: inline;"><button type="submit" class="modal-btn btn-confirm-delete">Yes, delete this repository</button></form>
+            </div>
+        </div>
+    </div>
 
-        new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['JavaScript', 'Python', 'CSS', 'HTML', 'Other'],
-                datasets: [{
-                    data: [35, 25, 20, 15, 5],
-                    backgroundColor: [
-                        '#6366f1',
-                        '#10b981',
-                        '#f59e0b',
-                        '#ef4444',
-                        '#8b5cf6'
-                    ],
-                    borderWidth: 0,
-                    hoverOffset: 10
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 20,
-                            usePointStyle: true,
-                            font: {
-                                family: 'Inter',
-                                size: 12
+    <script>
+        // --- ALL JAVASCRIPT IS NOW CONSOLIDATED HERE ---
+
+        // --- Delete Modal Logic ---
+        const deleteModal = document.getElementById('delete-modal');
+        const deleteForm = document.getElementById('delete-repo-form');
+        const repoNameToDelete = document.getElementById('repo-to-delete-name');
+        function openDeleteModal(repoName) {
+            deleteForm.action = `/delete_repo/${repoName}`;
+            repoNameToDelete.textContent = `"${repoName}"`;
+            deleteModal.classList.add('active');
+        }
+        function closeDeleteModal() { deleteModal.classList.remove('active'); }
+        deleteModal.addEventListener('click', (event) => { if (event.target === deleteModal) closeDeleteModal(); });
+
+        // --- File Input Enhancement ---
+        const fileInput = document.getElementById('project-file');
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                const fileDisplay = document.querySelector('.file-input-display span');
+                if (e.target.files.length > 0) fileDisplay.textContent = e.target.files[0].name;
+            });
+        }
+        
+        // --- Main DOMContentLoaded Event Listener ---
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize the interactive table for repositories
+            const tableElement = document.getElementById('repo-table');
+            if (tableElement) new InteractiveDataTable(tableElement);
+
+            // Initialize charts and fetch dynamic analytics data
+            const languageChart = createLanguageChart();
+            const commitChart = createCommitChart();
+            updateDashboardAnalytics(languageChart, commitChart);
+        });
+
+        // --- Dynamic Analytics Functions ---
+        function createLanguageChart() {
+            const ctx = document.getElementById('language-chart').getContext('2d');
+            return new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels: ['Loading...'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, font: { family: 'Inter' }}}}, cutout: '70%' }
+            });
+        }
+
+        function createCommitChart() {
+            const ctx = document.getElementById('commit-history-chart').getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Commits',
+                        data: [], // Initially empty
+                        fill: true,
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        borderColor: 'rgba(99, 102, 241, 1)',
+                        tension: 0.3,
+                        pointBackgroundColor: 'rgba(99, 102, 241, 1)',
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'month', tooltipFormat: 'MMM d, yyyy' },
+                            grid: { display: false },
+                            ticks: { font: { family: 'Inter' } }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: { drawBorder: false },
+                            ticks: { font: { family: 'Inter' }, precision: 0 }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    const d = new Date(context[0].parsed.x);
+                                    return `Week of ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`;
+                                },
+                                label: function(context) {
+                                    return `Commits: ${context.parsed.y}`;
+                                }
                             }
                         }
                     }
-                },
-                cutout: '70%'
-            }
-        });
-
-        // File input enhancement
-        const fileInput = document.getElementById('project-file');
-        const fileDisplay = document.querySelector('.file-input-display span');
-        
-        fileInput.addEventListener('change', function(e) {
-            if (e.target.files.length > 0) {
-                fileDisplay.textContent = e.target.files[0].name;
-            }
-        });
-
-        // Chart controls
-        document.querySelectorAll('.chart-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
+                }
             });
-        });
+        }
+
+        async function updateDashboardAnalytics(langChart, comChart) {
+            try {
+                const response = await fetch('/api/dashboard_analytics');
+                if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+                const data = await response.json();
+
+                // Update Stat Cards
+                document.getElementById('total-stars-stat').textContent = data.total_stars.toLocaleString();
+                document.getElementById('top-language-stat').textContent = data.top_language;
+
+                // Update Language Doughnut Chart
+                const langLabels = Object.keys(data.language_stats);
+                const langData = Object.values(data.language_stats);
+                const langColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#d946ef'];
+                langChart.data.labels = langLabels.length > 0 ? langLabels : ['No Language Data'];
+                langChart.data.datasets[0].data = langData.length > 0 ? langData : [1];
+                langChart.data.datasets[0].backgroundColor = langData.length > 0 ? langColors : ['#e5e7eb'];
+                langChart.update();
+
+                // Update Commit History Chart
+                const commitDataPoints = data.commit_history.map((count, i) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (51 - i) * 7);
+                    return { x: date.getTime(), y: count };
+                });
+                comChart.data.datasets[0].data = commitDataPoints;
+                comChart.update();
+
+            } catch (error) {
+                console.error("Error fetching dashboard analytics:", error);
+                document.getElementById('total-stars-stat').textContent = 'Error';
+                document.getElementById('top-language-stat').textContent = 'Error';
+            }
+        }
+        
+        // --- Interactive Data Table Class ---
+        class InteractiveDataTable {
+            constructor(tableElement) {
+                this.table = tableElement;
+                this.tbody = this.table.querySelector('tbody');
+                this.searchBar = document.getElementById('repo-search-bar');
+                this.paginationControls = document.getElementById('pagination-controls');
+                this.template = document.getElementById('repo-row-template');
+                this.languageColors = { 'python': '#3572A5', 'javascript': '#f1e05a', 'html': '#e34c26', 'css': '#563d7c', 'shell': '#89e051', 'java': '#b07219', 'c++': '#f34b7d', 'typescript': '#2b7489', 'php': '#4F5D95', 'c#': '#178600', 'unknown': '#ccc' };
+                this.repos = this.getRepoDataFromDOM();
+                this.filteredRepos = [...this.repos];
+                this.sortColumn = 'updated';
+                this.sortDirection = 'desc';
+                this.currentPage = 1;
+                this.rowsPerPage = 10;
+                this.init();
+            }
+
+            init() { this.setupEventListeners(); this.sortData(); this.render(); }
+            getRepoDataFromDOM() {
+                if (!this.template) return [];
+                return Array.from(this.template.content.querySelectorAll('tr')).map(row => ({ name: row.dataset.name, description: row.dataset.description, language: row.dataset.language, stars: parseInt(row.dataset.stars, 10), updated: new Date(row.dataset.updated), html: row.innerHTML }));
+            }
+            setupEventListeners() {
+                this.searchBar.addEventListener('input', () => { this.currentPage = 1; this.filterData(); this.sortData(); this.render(); });
+                this.table.querySelectorAll('thead th[data-sort]').forEach(header => {
+                    header.addEventListener('click', () => {
+                        const column = header.dataset.sort;
+                        this.sortDirection = (this.sortColumn === column && this.sortDirection === 'asc') ? 'desc' : 'asc';
+                        this.sortColumn = column;
+                        this.sortData();
+                        this.render();
+                    });
+                });
+            }
+            filterData() { const query = this.searchBar.value.toLowerCase().trim(); this.filteredRepos = this.repos.filter(repo => repo.name.includes(query) || repo.description.includes(query)); }
+            sortData() {
+                const type = this.table.querySelector(`th[data-sort="${this.sortColumn}"]`)?.dataset.type || 'string';
+                this.filteredRepos.sort((a, b) => {
+                    let valA = a[this.sortColumn], valB = b[this.sortColumn];
+                    if (type === 'number') { valA = +valA; valB = +valB; }
+                    if (valA < valB) return this.sortDirection === 'asc' ? -1 : 1;
+                    if (valA > valB) return this.sortDirection === 'asc' ? 1 : -1;
+                    return 0;
+                });
+                this.updateSortIndicators();
+            }
+            updateSortIndicators() {
+                this.table.querySelectorAll('thead th[data-sort]').forEach(th => {
+                    th.classList.remove('sorted', 'asc', 'desc');
+                    const indicator = th.querySelector('.sort-indicator');
+                    if(indicator) indicator.className = 'fas fa-sort sort-indicator';
+                    if (th.dataset.sort === this.sortColumn) {
+                        th.classList.add('sorted', this.sortDirection);
+                        if(indicator) indicator.className = `fas fa-sort-${this.sortDirection === 'asc' ? 'up' : 'down'} sort-indicator`;
+                    }
+                });
+            }
+            render() { this.renderTableRows(); this.renderPagination(); }
+            formatRelativeTime(date) {
+                const seconds = Math.round((new Date() - date) / 1000), minutes = Math.round(seconds / 60), hours = Math.round(minutes / 60), days = Math.round(hours / 24);
+                if (seconds < 60) return "just now";
+                if (minutes < 60) return `${minutes} min ago`;
+                if (hours < 24) return `${hours} hr ago`;
+                if (days < 30) return `${days} days ago`;
+                const months = Math.floor(days / 30);
+                return `${months} month${months > 1 ? 's' : ''} ago`;
+            }
+            renderTableRows() {
+                this.tbody.innerHTML = '';
+                const paginatedRepos = this.filteredRepos.slice((this.currentPage - 1) * this.rowsPerPage, this.currentPage * this.rowsPerPage);
+                if (paginatedRepos.length === 0) { this.tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;">No repositories found.</td></tr>`; return; }
+                paginatedRepos.forEach(repo => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = repo.html;
+                    row.children[4].textContent = this.formatRelativeTime(repo.updated);
+                    const langDot = row.querySelector('.language-dot');
+                    if (langDot) langDot.style.backgroundColor = this.languageColors[langDot.dataset.language] || this.languageColors['unknown'];
+                    this.tbody.appendChild(row);
+                });
+            }
+            renderPagination() {
+                this.paginationControls.innerHTML = '';
+                const totalItems = this.filteredRepos.length, totalPages = Math.ceil(totalItems / this.rowsPerPage);
+                if (totalPages <= 1) return;
+                const startItem = (this.currentPage - 1) * this.rowsPerPage + 1, endItem = Math.min(startItem + this.rowsPerPage - 1, totalItems);
+                const pageInfo = document.createElement('div');
+                pageInfo.id = 'page-info';
+                pageInfo.textContent = `Showing ${startItem} - ${endItem} of ${totalItems} results`;
+                const buttonsWrapper = document.createElement('div');
+                buttonsWrapper.className = 'pagination-buttons';
+                const prevButton = this.createPaginationButton('<i class="fas fa-chevron-left"></i>', this.currentPage - 1, this.currentPage === 1);
+                buttonsWrapper.appendChild(prevButton);
+                
+                // Smart pagination logic
+                let pagesToShow = [1, totalPages, this.currentPage, this.currentPage-1, this.currentPage+1];
+                pagesToShow = [...new Set(pagesToShow.filter(p => p > 0 && p <= totalPages))].sort((a,b)=>a-b);
+                let lastPage = 0;
+                pagesToShow.forEach(p => {
+                    if(lastPage > 0 && p > lastPage + 1) {
+                        buttonsWrapper.appendChild(this.createPaginationButton('...', null, true));
+                    }
+                    buttonsWrapper.appendChild(this.createPaginationButton(p, p, false, this.currentPage === p));
+                    lastPage = p;
+                });
+
+                const nextButton = this.createPaginationButton('<i class="fas fa-chevron-right"></i>', this.currentPage + 1, this.currentPage === totalPages);
+                buttonsWrapper.appendChild(nextButton);
+                this.paginationControls.appendChild(pageInfo);
+                this.paginationControls.appendChild(buttonsWrapper);
+            }
+            createPaginationButton(text, page, isDisabled = false, isActive = false) {
+                const button = document.createElement('button');
+                button.innerHTML = text;
+                button.classList.add('pagination-btn');
+                if (isActive) button.classList.add('active');
+                button.disabled = isDisabled;
+                if (!isDisabled && page) button.addEventListener('click', () => { this.currentPage = page; this.render(); });
+                return button;
+            }
+        }
     </script>
 </body>
 </html>
