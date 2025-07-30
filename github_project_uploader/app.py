@@ -1,103 +1,105 @@
-from flask import Flask, redirect, url_for, render_template, session, request
-from flask_dance.contrib.github import make_github_blueprint, github
-from utils.repo_utils import create_repo_from_zip, get_user_repos
-from dotenv import load_dotenv
 import os
+from collections import defaultdict
 
-# This is the "middleware" that should fix the http vs https problem.
+from flask import Flask, redirect, url_for, render_template, session, request, flash, jsonify
+from flask_dance.contrib.github import make_github_blueprint, github
 from werkzeug.middleware.proxy_fix import ProxyFix
+from dotenv import load_dotenv
 
-# Step 1: Load all the secret keys from your .env file
+# --- UPDATED IMPORT LIST ---
+# Import all necessary functions from your utility file, including the new ones for analytics.
+from utils.repo_utils import (
+    create_repo_from_zip, 
+    get_user_repos, 
+    get_repo_contents, 
+    get_file_content, 
+    update_file_in_repo,
+    create_new_file,
+    create_new_folder,
+    delete_repo,
+    # New functions for analytics
+    get_repo_stats,
+    get_repo_languages
+)
+
+# This setting is the final fix for the OAuth scope warning
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
+# Load environment variables from a .env file
 load_dotenv()
 
-# Step 2: Create the Flask application
 app = Flask(__name__)
 
-# Apply the ProxyFix middleware to the Flask app.
-# This tells our app to trust the headers from our hosting service (Render).
+# --- App Configuration ---
+# This is the final, correct configuration for session cookies and deployment.
+app.config.update(
+    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY"),
+    SESSION_COOKIE_SAMESITE='Lax', 
+)
+# This is required for running behind a reverse proxy (common in production).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Step 3: Set a permanent secret key for the session
-app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+if not app.config["SECRET_KEY"]:
+    raise ValueError("FLASK_SECRET_KEY is not set in your environment.")
 
-if not app.secret_key:
-    raise ValueError("No FLASK_SECRET_KEY set in the .env file. Please generate one and add it.")
-
+# This allows OAuth to work on http:// for local development.
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# Step 4: Configure the GitHub OAuth login
+# --- GitHub OAuth Blueprint ---
+# This is the final, correct configuration for the GitHub login blueprint.
 github_bp = make_github_blueprint(
     client_id=os.environ.get("GITHUB_CLIENT_ID"),
     client_secret=os.environ.get("GITHUB_CLIENT_SECRET"),
-    scope="repo",
+    scope=["repo", "delete_repo"], # The correct scope list for all features.
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
 
 
-# --- THIS IS THE NEW DEBUGGING CODE ---
-@app.before_request
-def before_request_func():
-    # This code runs before every single request to your application.
-    # We will check if the user is trying to go to the GitHub login page.
-    if request.path == "/login/github":
-        # If they are, we will generate the full callback URL that Flask-Dance
-        # is about to send to GitHub and we will print it to our server logs.
-        # This will show us the EXACT URL we need to put in our GitHub settings.
-        full_callback_url = url_for('github.login', _external=True)
-        print("**************************************************")
-        print("*****             DEBUGGING URL              *****")
-        print(f"***** The exact redirect_uri is: {full_callback_url}")
-        print("**************************************************")
-# --- END OF DEBUGGING CODE ---
-
-
-# --- Application Routes ---
+# --- Standard Application Routes ---
 
 @app.route("/")
 def home():
-    """The main page. It shows the login button or redirects to the dashboard."""
     if not github.authorized:
         return render_template("login.html")
     return redirect(url_for("dashboard"))
 
 @app.route("/github_login")
 def github_login():
-    """This route is called by GitHub after a successful login."""
     if not github.authorized:
-        return "GitHub login failed.", 401
+        flash("Authorization with GitHub failed. Please try again.", "error")
+        return redirect(url_for("home"))
+        
     resp = github.get("/user")
     if not resp.ok:
-        return "Failed to fetch user information from GitHub.", 401
+        flash("Failed to fetch your user information from GitHub.", "error")
+        return redirect(url_for("home"))
+
     session["github_user"] = resp.json()
     return redirect(url_for("dashboard"))
 
 @app.route("/dashboard")
 def dashboard():
-    """The main dashboard page, shown after a successful login."""
+    """Renders the main dashboard. Analytics data is loaded by a separate API call from the frontend."""
     if not github.authorized or "github_user" not in session:
         return redirect(url_for("home"))
+    
     access_token = github.token["access_token"]
     repos = get_user_repos(access_token)
+    
     return render_template("dashboard.html", user=session["github_user"], repos=repos)
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    """Handles the project zip file upload and repository creation."""
-    if "github_user" not in session:
-        return redirect(url_for("home"))
-    
+    if "github_user" not in session: return redirect(url_for("home"))
     project_file = request.files.get("project")
     repo_name = request.form.get("repo_name")
-    
     if not project_file or not repo_name:
         return render_error_page("Missing project zip file or repository name.")
-    
     if not project_file.filename.lower().endswith('.zip'):
         return render_error_page("Invalid file type. Please upload a .zip file.")
-    
+        
     access_token = github.token["access_token"]
-    
     result = create_repo_from_zip(access_token, project_file, repo_name)
     
     if result.get("success"):
@@ -105,446 +107,164 @@ def upload():
     else:
         return render_error_page(result.get('error'))
 
+# --- NEW API ROUTE FOR DYNAMIC ANALYTICS ---
+@app.route("/api/dashboard_analytics")
+def dashboard_analytics():
+    """Provides real-time analytics data for the dashboard via a fetch request."""
+    if not github.authorized or "github_user" not in session:
+        return jsonify({"error": "Not authorized"}), 401
+    
+    access_token = github.token["access_token"]
+    owner = session["github_user"]["login"]
+    repos = get_user_repos(access_token)
+    
+    if not repos:
+        return jsonify({
+            "total_stars": 0, "language_stats": {}, "top_language": "N/A",
+            "commit_history": [0]*52
+        })
 
-def render_success_page(repo_url, repo_name):
-    """Renders a professional success page with modern styling."""
-    return f'''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Upload Successful - ProjectPusher</title>
-        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
+    # Calculate Total Stars
+    total_stars = sum(repo.get('stargazers_count', 0) for repo in repos)
 
-            body {{
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-            }}
+    # Aggregate Language Statistics
+    language_stats = defaultdict(int)
+    for repo in repos:
+        primary_language = repo.get("language")
+        if primary_language:
+            language_stats[primary_language] += 1
+    
+    sorted_languages = sorted(language_stats.items(), key=lambda item: item[1], reverse=True)
+    top_language = sorted_languages[0][0] if sorted_languages else "N/A"
+    
+    # Prepare data for doughnut chart (Top 5 languages + "Other")
+    top_5_languages = dict(sorted_languages[:5])
+    other_count = sum(count for lang, count in sorted_languages[5:])
+    if other_count > 0:
+        top_5_languages['Other'] = other_count
 
-            .success-container {{
-                background: rgba(255, 255, 255, 0.95);
-                backdrop-filter: blur(20px);
-                border-radius: 24px;
-                padding: 60px 40px;
-                text-align: center;
-                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
-                max-width: 500px;
-                width: 100%;
-                position: relative;
-                overflow: hidden;
-            }}
-
-            .success-container::before {{
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 4px;
-                background: linear-gradient(90deg, #10b981, #059669, #047857);
-            }}
-
-            .success-icon {{
-                width: 80px;
-                height: 80px;
-                background: linear-gradient(135deg, #10b981, #059669);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 0 auto 30px;
-                animation: successPulse 2s ease-in-out infinite;
-            }}
-
-            .success-icon i {{
-                font-size: 36px;
-                color: white;
-            }}
-
-            @keyframes successPulse {{
-                0%, 100% {{ transform: scale(1); }}
-                50% {{ transform: scale(1.05); }}
-            }}
-
-            .success-title {{
-                font-size: 28px;
-                font-weight: 700;
-                color: #1f2937;
-                margin-bottom: 16px;
-                line-height: 1.2;
-            }}
-
-            .success-message {{
-                font-size: 16px;
-                color: #6b7280;
-                margin-bottom: 40px;
-                line-height: 1.6;
-            }}
-
-            .repo-card {{
-                background: #f8fafc;
-                border: 2px solid #e5e7eb;
-                border-radius: 16px;
-                padding: 24px;
-                margin-bottom: 40px;
-                transition: all 0.3s ease;
-                position: relative;
-            }}
-
-            .repo-card:hover {{
-                border-color: #6366f1;
-                transform: translateY(-2px);
-                box-shadow: 0 10px 25px rgba(99, 102, 241, 0.15);
-            }}
-
-            .github-logo {{
-                width: 32px;
-                height: 32px;
-                margin-bottom: 12px;
-            }}
-
-            .repo-name {{
-                font-size: 18px;
-                font-weight: 600;
-                color: #1f2937;
-                margin-bottom: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 8px;
-            }}
-
-            .repo-url {{
-                color: #6366f1;
-                text-decoration: none;
-                font-size: 14px;
-                word-break: break-all;
-                transition: color 0.3s ease;
-            }}
-
-            .repo-url:hover {{
-                color: #4f46e5;
-            }}
-
-            .external-link-icon {{
-                font-size: 12px;
-                margin-left: 4px;
-                opacity: 0.7;
-            }}
-
-            .action-buttons {{
-                display: flex;
-                gap: 16px;
-                justify-content: center;
-                flex-wrap: wrap;
-            }}
-
-            .btn {{
-                padding: 14px 28px;
-                border-radius: 12px;
-                text-decoration: none;
-                font-weight: 600;
-                font-size: 14px;
-                transition: all 0.3s ease;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                min-width: 140px;
-                justify-content: center;
-            }}
-
-            .btn-primary {{
-                background: linear-gradient(135deg, #6366f1, #4f46e5);
-                color: white;
-                border: none;
-            }}
-
-            .btn-primary:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 10px 25px rgba(99, 102, 241, 0.3);
-            }}
-
-            .btn-secondary {{
-                background: white;
-                color: #6b7280;
-                border: 2px solid #e5e7eb;
-            }}
-
-            .btn-secondary:hover {{
-                border-color: #d1d5db;
-                color: #374151;
-                transform: translateY(-1px);
-            }}
-
-            .floating-elements {{
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                pointer-events: none;
-                overflow: hidden;
-                z-index: -1;
-            }}
-
-            .floating-elements i {{
-                position: absolute;
-                color: rgba(255, 255, 255, 0.1);
-                animation: float 6s ease-in-out infinite;
-            }}
-
-            .floating-elements i:nth-child(1) {{
-                top: 20%;
-                left: 10%;
-                font-size: 24px;
-                animation-delay: 0s;
-            }}
-
-            .floating-elements i:nth-child(2) {{
-                top: 60%;
-                right: 15%;
-                font-size: 18px;
-                animation-delay: 2s;
-            }}
-
-            .floating-elements i:nth-child(3) {{
-                bottom: 20%;
-                left: 20%;
-                font-size: 20px;
-                animation-delay: 4s;
-            }}
-
-            @keyframes float {{
-                0%, 100% {{ transform: translateY(0px) rotate(0deg); }}
-                50% {{ transform: translateY(-20px) rotate(10deg); }}
-            }}
-
-            @media (max-width: 640px) {{
-                .success-container {{
-                    padding: 40px 24px;
-                    margin: 20px;
-                }}
-                
-                .success-title {{
-                    font-size: 24px;
-                }}
-                
-                .action-buttons {{
-                    flex-direction: column;
-                    align-items: center;
-                }}
-                
-                .btn {{
-                    width: 100%;
-                    max-width: 200px;
-                }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="floating-elements">
-            <i class="fab fa-github"></i>
-            <i class="fas fa-code"></i>
-            <i class="fas fa-rocket"></i>
-        </div>
-
-        <div class="success-container">
-            <div class="success-icon">
-                <i class="fas fa-check"></i>
-            </div>
-            
-            <h1 class="success-title">Project Successfully Uploaded!</h1>
-            <p class="success-message">Your project has been successfully pushed to GitHub and is now live in your repository.</p>
-            
-            <div class="repo-card">
-                <svg class="github-logo" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                </svg>
-                <div class="repo-name">
-                    <i class="fas fa-folder-open"></i>
-                    {repo_name}
-                </div>
-                <a href="{repo_url}" class="repo-url" target="_blank">
-                    {repo_url.replace('https://', '')}
-                    <i class="fas fa-external-link-alt external-link-icon"></i>
-                </a>
-            </div>
-            
-            <div class="action-buttons">
-                <a href="{repo_url}" class="btn btn-primary" target="_blank">
-                    <i class="fab fa-github"></i>
-                    View Repository
-                </a>
-                <a href="/dashboard" class="btn btn-secondary">
-                    <i class="fas fa-arrow-left"></i>
-                    Back to Dashboard
-                </a>
-            </div>
-        </div>
-
-        <script>
-            // Add a subtle entrance animation
-            document.addEventListener('DOMContentLoaded', function() {{
-                const container = document.querySelector('.success-container');
-                container.style.opacity = '0';
-                container.style.transform = 'translateY(30px)';
-                
-                setTimeout(() => {{
-                    container.style.transition = 'all 0.6s ease';
-                    container.style.opacity = '1';
-                    container.style.transform = 'translateY(0)';
-                }}, 100);
-            }});
-        </script>
-    </body>
-    </html>
-    '''
+    # Aggregate Commit History (fetches from the 5 most recently updated repos for performance)
+    commit_history = [0] * 52
+    recent_repos = sorted(repos, key=lambda x: x['updated_at'], reverse=True)[:5]
+    
+    for repo in recent_repos:
+        stats_result = get_repo_stats(access_token, owner, repo['name'], 'participation')
+        if stats_result["success"] and stats_result["data"]:
+            user_commits = stats_result["data"].get("owner", [])
+            for i, count in enumerate(user_commits):
+                if i < 52:
+                    commit_history[i] += count
+    
+    return jsonify({
+        "total_stars": total_stars,
+        "language_stats": top_5_languages,
+        "top_language": top_language,
+        "commit_history": commit_history
+    })
 
 
-def render_error_page(error_message):
-    """Renders a professional error page with modern styling."""
-    return f'''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Upload Failed - ProjectPusher</title>
-        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
+# --- IDE and Repo Management Routes ---
 
-            body {{
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-            }}
+@app.route("/repo/<repo_name>/", defaults={'folder_path': ''})
+@app.route("/repo/<repo_name>/<path:folder_path>")
+def view_repository(repo_name, folder_path):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    result = get_repo_contents(access_token, owner, repo_name, path=folder_path)
+    if result.get("success"):
+        return render_template("repository_view.html", repo_name=repo_name, contents=result["contents"], path=folder_path, breadcrumbs=folder_path.split('/') if folder_path else [])
+    else:
+        return render_error_page(result.get("error"))
 
-            .error-container {{
-                background: rgba(255, 255, 255, 0.95);
-                backdrop-filter: blur(20px);
-                border-radius: 24px;
-                padding: 60px 40px;
-                text-align: center;
-                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
-                max-width: 500px;
-                width: 100%;
-                position: relative;
-                overflow: hidden;
-            }}
+@app.route("/repo/<repo_name>/edit/<path:file_path>")
+def edit_file(repo_name, file_path):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    result = get_file_content(access_token, owner, repo_name, file_path)
+    if result.get("success"):
+        return render_template("file_editor.html", repo_name=repo_name, file_path=file_path, content=result["content"], sha=result["sha"], is_binary=result["is_binary"])
+    else:
+        return render_error_page(result.get("error"))
 
-            .error-container::before {{
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 4px;
-                background: linear-gradient(90deg, #ef4444, #dc2626, #b91c1c);
-            }}
+@app.route("/repo/<repo_name>/save/<path:file_path>", methods=["POST"])
+def save_file(repo_name, file_path):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    new_content, commit_message, sha = request.form.get("content"), request.form.get("commit_message"), request.form.get("sha")
+    if new_content is None or not commit_message or not sha:
+        return render_error_page("Missing content, commit message, or file SHA for saving.")
+    result = update_file_in_repo(access_token, owner, repo_name, file_path, new_content, commit_message, sha)
+    if result.get("success"):
+        flash(f"Successfully committed '{file_path}'!", "success")
+        parent_folder = os.path.dirname(file_path)
+        return redirect(url_for("view_repository", repo_name=repo_name, folder_path=parent_folder))
+    else:
+        return render_error_page(result.get("error"))
 
-            .error-icon {{
-                width: 80px;
-                height: 80px;
-                background: linear-gradient(135deg, #ef4444, #dc2626);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 0 auto 30px;
-            }}
+@app.route("/repo/<repo_name>/new_file", methods=["POST"])
+def new_file(repo_name):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    current_path, new_file_name = request.form.get("current_path", ""), request.form.get("file_name")
+    if not new_file_name: return render_error_page("New file name cannot be empty.")
+    full_path = os.path.join(current_path, new_file_name).replace("\\", "/")
+    commit_message = f"feat: Create new file '{new_file_name}'"
+    result = create_new_file(access_token, owner, repo_name, full_path, commit_message)
+    if result.get("success"):
+        flash(f"Successfully created file '{new_file_name}'!", "success")
+        return redirect(url_for("edit_file", repo_name=repo_name, file_path=full_path))
+    else:
+        return render_error_page(result.get("error"))
 
-            .error-icon i {{
-                font-size: 36px;
-                color: white;
-            }}
+@app.route("/repo/<repo_name>/new_folder", methods=["POST"])
+def new_folder(repo_name):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    current_path, new_folder_name = request.form.get("current_path", ""), request.form.get("folder_name")
+    if not new_folder_name: return render_error_page("New folder name cannot be empty.")
+    full_path = os.path.join(current_path, new_folder_name).replace("\\", "/")
+    result = create_new_folder(access_token, owner, repo_name, full_path)
+    if result.get("success"):
+        flash(f"Successfully created folder '{new_folder_name}'!", "success")
+        return redirect(url_for("view_repository", repo_name=repo_name, folder_path=full_path))
+    else:
+        return render_error_page(result.get("error"))
 
-            .error-title {{
-                font-size: 28px;
-                font-weight: 700;
-                color: #1f2937;
-                margin-bottom: 16px;
-                line-height: 1.2;
-            }}
-
-            .error-message {{
-                font-size: 16px;
-                color: #6b7280;
-                margin-bottom: 40px;
-                line-height: 1.6;
-                padding: 20px;
-                background: #fef2f2;
-                border-radius: 12px;
-                border-left: 4px solid #ef4444;
-            }}
-
-            .btn {{
-                padding: 14px 28px;
-                border-radius: 12px;
-                text-decoration: none;
-                font-weight: 600;
-                font-size: 14px;
-                transition: all 0.3s ease;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                background: linear-gradient(135deg, #6366f1, #4f46e5);
-                color: white;
-                border: none;
-            }}
-
-            .btn:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 10px 25px rgba(99, 102, 241, 0.3);
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="error-container">
-            <div class="error-icon">
-                <i class="fas fa-exclamation-triangle"></i>
-            </div>
-            
-            <h1 class="error-title">Upload Failed</h1>
-            <div class="error-message">
-                <strong>Error:</strong> {error_message}
-            </div>
-            
-            <a href="/dashboard" class="btn">
-                <i class="fas fa-arrow-left"></i>
-                Try Again
-            </a>
-        </div>
-    </body>
-    </html>
-    '''
+@app.route("/delete_repo/<repo_name>", methods=["POST"])
+def delete_repo_route(repo_name):
+    if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
+    access_token, owner = github.token["access_token"], session["github_user"]["login"]
+    result = delete_repo(access_token, owner, repo_name)
+    if result.get("success"):
+        flash(f"Repository '{repo_name}' has been permanently deleted.", "success")
+    else:
+        flash(f"Error deleting repository '{repo_name}': {result.get('error')}", "error")
+    return redirect(url_for("dashboard"))
 
 @app.route("/logout")
 def logout():
     """Logs the user out by clearing the session."""
     session.clear()
+    flash("You have been successfully logged out.", "info")
     return redirect(url_for("home"))
 
-# --- Run the App ---
+# --- HTML Rendering Helper Functions ---
+# (These are kept as they are, providing self-contained pages for success/error states)
+
+def render_success_page(repo_url, repo_name):
+    """Renders a professional success page with modern styling."""
+    return f'''
+    <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Upload Successful</title><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"><style>body{{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}}.success-container{{background:rgba(255,255,255,0.95);border-radius:24px;padding:60px 40px;text-align:center;box-shadow:0 25px 50px rgba(0,0,0,0.15);max-width:500px;width:100%;}}.success-icon{{width:80px;height:80px;background:linear-gradient(135deg,#10b981,#059669);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 30px;}}.success-icon i{{font-size:36px;color:white;}}.success-title{{font-size:28px;font-weight:700;color:#1f2937;margin-bottom:16px;}}.success-message{{font-size:16px;color:#6b7280;margin-bottom:40px;}}.repo-card{{background:#f8fafc;border:2px solid #e5e7eb;border-radius:16px;padding:24px;margin-bottom:40px;}}.repo-name{{font-size:18px;font-weight:600;color:#1f2937;}}.btn{{padding:14px 28px;border-radius:12px;text-decoration:none;font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:8px;}}.btn-primary{{background:linear-gradient(135deg,#6366f1,#4f46e5);color:white;}}.btn-secondary{{background:white;color:#6b7280;border:2px solid #e5e7eb;}}</style></head><body><div class="success-container"><div class="success-icon"><i class="fas fa-check"></i></div><h1 class="success-title">Upload Successful!</h1><p class="success-message">Your project is now live in your new GitHub repository.</p><div class="repo-card"><div class="repo-name"><i class="fab fa-github"></i> {repo_name}</div></div><div style="display:flex;gap:16px;justify-content:center;"><a href="{repo_url}" class="btn btn-primary" target="_blank"><i class="fas fa-external-link-alt"></i> View on GitHub</a><a href="/dashboard" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> To Dashboard</a></div></div></body></html>
+    '''
+
+def render_error_page(error_message):
+    """Renders a professional error page with modern styling."""
+    return f'''
+    <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Upload Failed</title><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"><style>body{{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}}.error-container{{background:rgba(255,255,255,0.95);border-radius:24px;padding:60px 40px;text-align:center;box-shadow:0 25px 50px rgba(0,0,0,0.15);max-width:500px;width:100%;}}.error-icon{{width:80px;height:80px;background:linear-gradient(135deg,#ef4444,#dc2626);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 30px;}}.error-icon i{{font-size:36px;color:white;}}.error-title{{font-size:28px;font-weight:700;color:#1f2937;margin-bottom:16px;}}.error-message{{font-size:16px;color:#6b7280;margin-bottom:40px;padding:20px;background:#fef2f2;border-radius:12px;border-left:4px solid #ef4444;text-align:left;}}.btn{{padding:14px 28px;border-radius:12px;text-decoration:none;font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#6366f1,#4f46e5);color:white;}}</style></head><body><div class="error-container"><div class="error-icon"><i class="fas fa-exclamation-triangle"></i></div><h1 class="error-title">An Error Occurred</h1><div class="error-message"><strong>Details:</strong> {error_message}</div><a href="/dashboard" class="btn"><i class="fas fa-arrow-left"></i> Back to Dashboard</a></div></body></html>
+    '''
+
+# --- Main Execution ---
 if __name__ == '__main__':
+    # debug=True provides helpful error pages and auto-reloads the server on code changes.
+    # Make sure to set debug=False in a production environment.
     app.run(debug=True, port=5000)
