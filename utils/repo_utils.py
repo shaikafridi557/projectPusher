@@ -158,18 +158,32 @@ def get_user_repos(token):
     response = _github_api_request("GET", repos_url, token)
     return response["data"] if response["success"] else []
 
-
 def get_repo_contents(token, owner, repo_name, path=""):
-    """Fetches the list of files and folders for the repository explorer page."""
+    """
+    Fetches the contents of a path. Handles both directories (returning a sorted list)
+    and single files (returning a dictionary).
+    """
+    headers = { "Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json" }
     contents_url = f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/contents/{path}"
-    response = _github_api_request("GET", contents_url, token)
-    if response["success"]:
-        contents = response["data"]
-        # Sort contents to show folders first, then files, all alphabetically.
-        contents.sort(key=lambda x: (x['type'] != 'dir', x['name'].lower()))
-        return {"success": True, "contents": contents}
-    return response
+    try:
+        response = requests.get(contents_url, headers=headers)
+        response.raise_for_status()
+        contents = response.json()
 
+        # --- THIS IS THE FIX ---
+        # If the contents is a list (meaning it's a directory), sort it.
+        if isinstance(contents, list):
+            contents.sort(key=lambda x: (x['type'] != 'dir', x['name'].lower()))
+        
+        # If it's a dictionary (a single file), do nothing.
+        # Then, return the contents, whether it's a sorted list or a single dictionary.
+        return {"success": True, "contents": contents}
+
+    except requests.exceptions.RequestException as e:
+        error_message = f"Could not list repository contents: {e}"
+        if e.response is not None:
+            error_message = f"GitHub API Error: {e.response.text} (Status: {e.response.status_code})"
+        return {"success": False, "error": error_message}
 
 def get_file_content(token, owner, repo_name, file_path):
     """Fetches the content of a single file for the editor page."""
@@ -253,3 +267,85 @@ def get_repo_languages(token, owner, repo_name):
     languages_url = f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/languages"
     response = _github_api_request("GET", languages_url, token)
     return {"success": response["success"], "data": response.get("data", {}), "error": response.get("error")}
+# In utils/repo_utils.py, add this new helper function
+
+def delete_file(token, owner, repo_name, file_path, sha, commit_message):
+    """Deletes a single file from the repository."""
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    url = f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/contents/{file_path}"
+    data = {"message": commit_message, "sha": sha}
+    try:
+        response = requests.delete(url, headers=headers, json=data)
+        response.raise_for_status()
+        return {"success": True}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": f"Failed to delete file: {e.response.json().get('message')}"}
+
+# Now add the main function for moving/copying
+def move_or_copy_item(token, owner, repo_name, source_path, destination_path, operation):
+    """
+    Recursively moves ('cut') or copies files and folders within a repository.
+    """
+    # Determine the new full path for the item
+    item_name = os.path.basename(source_path)
+    new_path = os.path.join(destination_path, item_name).replace("\\", "/")
+
+    # Prevent moving an item into itself
+    if new_path.startswith(source_path + '/'):
+        return {"success": False, "error": "Cannot move a folder into itself."}
+    if new_path == source_path:
+        return {"success": False, "error": "Source and destination are the same."}
+
+    # First, check if the item is a file or a directory
+    source_info_res = get_repo_contents(token, owner, repo_name, source_path)
+    
+    # CASE 1: The source is a single file
+    if isinstance(source_info_res.get("contents"), dict): # The API returns a dict for a single file
+        source_file = source_info_res["contents"]
+        content_b64 = source_file["content"]
+        
+        # Create the new file
+        create_res = create_new_file_with_content(token, owner, repo_name, new_path, content_b64, f"feat: Copy '{item_name}'")
+        if not create_res["success"]:
+            return create_res
+        
+        # If it's a 'cut' operation, delete the original file
+        if operation == 'cut':
+            return delete_file(token, owner, repo_name, source_path, source_file["sha"], f"feat: Move '{item_name}' (delete original)")
+        
+        return {"success": True}
+
+    # CASE 2: The source is a directory
+    elif isinstance(source_info_res.get("contents"), list): # The API returns a list for a directory
+        # Recursively process all items in the directory
+        for item in source_info_res["contents"]:
+            # The new source path is the item's path, the new destination is our new folder's path
+            result = move_or_copy_item(token, owner, repo_name, item["path"], new_path, operation)
+            if not result["success"]:
+                return result # Stop if any sub-operation fails
+        
+        # If 'cut', we must also delete the placeholder .gitkeep if it exists, to clean up the old folder
+        if operation == 'cut':
+            placeholder_path = f"{source_path}/.gitkeep"
+            content_res = get_file_content(token, owner, repo_name, placeholder_path)
+            if content_res["success"]:
+                delete_file(token, owner, repo_name, placeholder_path, content_res["sha"], f"feat: Clean up folder '{source_path}'")
+
+        return {"success": True}
+        
+    else:
+        return {"success": False, "error": "Source path could not be found or is not a file/folder."}
+
+
+# We also need a modified `create_new_file` that accepts content directly
+def create_new_file_with_content(token, owner, repo_name, file_path, content_b64, commit_message):
+    """Creates a new file with specified Base64 content."""
+    headers = { "Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json" }
+    url = f"{GITHUB_API_URL}/repos/{owner}/{repo_name}/contents/{file_path}"
+    data = { "message": commit_message, "content": content_b64 }
+    try:
+        response = requests.put(url, headers=headers, json=data)
+        response.raise_for_status()
+        return {"success": True}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": f"Failed to create file: {e.response.json().get('message')}"}
