@@ -1,26 +1,13 @@
-# This is the final render.yaml file for free deployment.
+# This is the final render.yaml for a single-service deployment on the free plan.
 
 services:
-  # ----------------------------------
-  # 1. The Web Service for your Flask App
-  # ----------------------------------
+  # We now only have ONE service. The worker logic is started by app.py.
   - type: web
-    name: projectpusher-web
+    name: projectpusher # A simpler name for the combined service
     env: python
-    plan: free # <--- ADD THIS LINE to specify the free instance type
+    plan: free 
     buildCommand: "pip install -r requirements.txt"
+    # The start command is the same. Gunicorn starts app.py, which starts the worker.
     startCommand: "gunicorn app:app"
     envVars:
       - fromGroup: projectpusher-env 
-
-  # ----------------------------------
-  # 2. The Background Worker for your worker.py
-  # ----------------------------------
-  - type: worker
-    name: projectpusher-worker
-    env: python
-    plan: free # <--- ADD THIS LINE to specify the free instance type
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python worker.py"
-    envVars:
-      - fromGroup: projectpusher-env
