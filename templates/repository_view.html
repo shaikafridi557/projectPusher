@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Explorer - {{ repo_name }}</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary-color: #6366f1; --primary-dark: #4338ca; --secondary-color: #10b981; --accent-color: #f59e0b;
+            --gray-100: #f3f4f6; --gray-200: #e5e7eb; --gray-700: #374151;
+            --bg-primary: #ffffff; --bg-secondary: #f8fafc; --text-primary: #1e293b; --text-secondary: #475569;
+            --spacing-sm: 0.5rem; --spacing-md: 1rem; --spacing-lg: 1.5rem; --spacing-xl: 2rem;
+            --radius-md: 0.5rem; --radius-xl: 1rem;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); --transition-fast: 0.15s ease-in-out; --transition-normal: 0.3s ease-in-out;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-secondary); color: var(--text-primary); }
+        .container { max-width: 1200px; margin: 0 auto; padding: var(--spacing-lg); }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-lg); }
+        h2 { font-size: 24px; font-weight: 600; display: flex; align-items: center; gap: var(--spacing-md); }
+        h2 i { color: var(--primary-color); }
+        .breadcrumb { display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-lg); font-size: 14px; flex-wrap: wrap; }
+        .breadcrumb a { color: var(--primary-color); text-decoration: none; font-weight: 500; }
+        .breadcrumb span { color: var(--text-secondary); }
+        .file-explorer { background: var(--bg-primary); border-radius: var(--radius-xl); padding: var(--spacing-xl); box-shadow: var(--shadow-sm); border: 1px solid var(--gray-200); }
+        .file-list { list-style: none; }
+        .file-item { display: flex; align-items: center; padding: var(--spacing-md); border-bottom: 1px solid var(--gray-200); transition: var(--transition-normal); }
+        .file-item:last-child { border-bottom: none; }
+        .file-item:hover { background-color: var(--bg-secondary); }
+        .file-icon { width: 32px; text-align: center; font-size: 18px; color: var(--primary-color); }
+        .file-name { flex: 1; margin-left: var(--spacing-md); text-decoration: none; color: var(--text-primary); font-weight: 500; }
+        .file-actions { margin-left: auto; }
+        .file-actions a, .repo-link, .action-btn {
+            background: var(--bg-secondary); border: 1px solid var(--gray-200); border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-md); text-decoration: none; color: var(--text-secondary);
+            font-size: 12px; font-weight: 500; transition: var(--transition-fast); display: inline-flex;
+            align-items: center; gap: var(--spacing-sm); cursor: pointer;
+        }
+        .file-actions a:hover, .repo-link:hover, .action-btn:hover { background-color: var(--gray-100); color: var(--text-primary); }
+        .header-actions { display: flex; gap: var(--spacing-md); }
+        
+        /* --- NEW STYLES FOR THE CUSTOM MODAL --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal-content {
+            background: white;
+            padding: var(--spacing-xl);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            width: 100%;
+            max-width: 450px;
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
+        }
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+        .modal-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: var(--spacing-md);
+            color: var(--text-primary);
+        }
+        .modal-input {
+            width: 100%;
+            border: 1px solid var(--gray-200);
+            border-radius: var(--radius-md);
+            padding: 0.75rem;
+            font-size: 14px;
+            margin-bottom: var(--spacing-lg);
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: var(--spacing-md);
+        }
+        .modal-btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: var(--radius-md);
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .btn-cancel {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--gray-200);
+            color: var(--text-secondary);
+        }
+        .btn-create {
+            background-color: var(--primary-color);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="file-explorer">
+            <div class="section-header">
+                <h2><i class="fas fa-folder-open"></i> File Explorer: {{ repo_name }}</h2>
+                <div class="header-actions">
+                    <button class="action-btn" onclick="openCreateModal('file')"><i class="fas fa-plus"></i> New File</button>
+                    <button class="action-btn" onclick="openCreateModal('folder')"><i class="fas fa-folder-plus"></i> New Folder</button>
+                    <a href="{{ url_for('dashboard') }}" class="repo-link" style="background: var(--primary-color); color: white;"><i class="fas fa-arrow-left"></i> Dashboard</a>
+                </div>
+            </div>
+
+            <div class="breadcrumb">
+                <a href="{{ url_for('view_repository', repo_name=repo_name) }}"><i class="fas fa-home"></i> Root</a>
+                {% for part in breadcrumbs %}{% if part %}
+                    <span>/</span>
+                    <a href="{{ url_for('view_repository', repo_name=repo_name, folder_path='/'.join(breadcrumbs[:loop.index])) }}">{{ part }}</a>
+                {% endif %}{% endfor %}
+            </div>
+
+            <ul class="file-list">
+                {% if path %}
+                    <li class="file-item">
+                        <span class="file-icon"><i class="fas fa-level-up-alt"></i></span>
+                        <a href="{{ url_for('view_repository', repo_name=repo_name, folder_path='/'.join(path.split('/')[:-1])) }}" class="file-name">..</a>
+                    </li>
+                {% endif %}
+                {% for item in contents %}
+                    <li class="file-item">
+                        {% if item.type == 'dir' %}
+                            <span class="file-icon"><i class="fas fa-folder" style="color: var(--accent-color);"></i></span>
+                            <a href="{{ url_for('view_repository', repo_name=repo_name, folder_path=item.path) }}" class="file-name">{{ item.name }}</a>
+                        {% else %}
+                            <span class="file-icon"><i class="fas fa-file-alt"></i></span>
+                            <a href="{{ url_for('edit_file', repo_name=repo_name, file_path=item.path) }}" class="file-name">{{ item.name }}</a>
+                        {% endif %}
+                        <div class="file-actions">
+                            <a href="{{ item.html_url }}" target="_blank">View on GitHub <i class="fas fa-external-link-alt"></i></a>
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <!-- Hidden forms that our JavaScript will still use to submit the data -->
+    <form id="new-file-form" action="{{ url_for('new_file', repo_name=repo_name) }}" method="post" style="display:none;">
+        <input type="hidden" name="current_path" value="{{ path }}">
+        <input type="hidden" id="new-file-name" name="file_name">
+    </form>
+    <form id="new-folder-form" action="{{ url_for('new_folder', repo_name=repo_name) }}" method="post" style="display:none;">
+        <input type="hidden" name="current_path" value="{{ path }}">
+        <input type="hidden" id="new-folder-name" name="folder_name">
+    </form>
+
+    <!-- The new, beautiful HTML modal -->
+    <div id="create-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 id="modal-title" class="modal-title">Create New</h3>
+            <input type="text" id="modal-input" class="modal-input" placeholder="Enter name...">
+            <div class="modal-actions">
+                <button id="modal-cancel-btn" class="modal-btn btn-cancel">Cancel</button>
+                <button id="modal-create-btn" class="modal-btn btn-create">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Get all the elements we need to interact with
+        const modal = document.getElementById('create-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalInput = document.getElementById('modal-input');
+        const createBtn = document.getElementById('modal-create-btn');
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+        
+        let currentCreateType = ''; // This will be 'file' or 'folder'
+
+        // This function opens the modal and sets it up
+        function openCreateModal(type) {
+            currentCreateType = type;
+            if (type === 'file') {
+                modalTitle.textContent = 'Create New File';
+                modalInput.placeholder = 'e.g., about.html';
+            } else {
+                modalTitle.textContent = 'Create New Folder';
+                modalInput.placeholder = 'e.g., images';
+            }
+            modal.classList.add('active');
+            modalInput.focus(); // Automatically focus the input field
+        }
+
+        // This function closes the modal
+        function closeCreateModal() {
+            modal.classList.remove('active');
+            modalInput.value = ''; // Clear the input for next time
+        }
+        
+        // This function handles the final submission
+        function handleCreate() {
+            const newName = modalInput.value;
+            if (newName) { // Make sure the user typed something
+                if (currentCreateType === 'file') {
+                    document.getElementById('new-file-name').value = newName;
+                    document.getElementById('new-file-form').submit();
+                } else {
+                    document.getElementById('new-folder-name').value = newName;
+                    document.getElementById('new-folder-form').submit();
+                }
+                closeCreateModal();
+            } else {
+                alert('Name cannot be empty.'); // A simple validation
+            }
+        }
+
+        // Add event listeners to our buttons and the modal itself
+        createBtn.addEventListener('click', handleCreate);
+        cancelBtn.addEventListener('click', closeCreateModal);
+        
+        // Allow pressing 'Enter' to submit
+        modalInput.addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                handleCreate();
+            }
+        });
+
+        // Allow clicking the dark background to close the modal
+        modal.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeCreateModal();
+            }
+        });
+    </script>
+</body>
+</html>
