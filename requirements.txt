@@ -6,4 +6,5 @@ python-dotenv
 Werkzeug
 uuid
 gunicorn  # <-- Add this for production
-GitPython # <-- You were using this in an older version, make sure it's here
+GitPython
+Flask-PyMongo   # <-- You were using this in an older version, make sure it's here
