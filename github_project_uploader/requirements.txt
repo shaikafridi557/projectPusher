@@ -1,7 +1,10 @@
-# requirements.txt
 Flask
 Flask-Dance
-python-dotenv
 requests
+python-dotenv
 gunicorn
-GitPython
+werkzeug
+gitpython
+redis
+rq 
+flask-pymongo
