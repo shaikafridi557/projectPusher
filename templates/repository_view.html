@@ -4,9 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>File Explorer - {{ repo_name }}</title>
+    <!-- Font Awesome for icons -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Google Fonts for typography -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* --- General Resets and Setup --- */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
             --primary-color: #6366f1; --primary-dark: #4338ca; --secondary-color: #10b981; --accent-color: #f59e0b;
@@ -14,102 +17,92 @@
             --bg-primary: #ffffff; --bg-secondary: #f8fafc; --text-primary: #1e293b; --text-secondary: #475569;
             --spacing-sm: 0.5rem; --spacing-md: 1rem; --spacing-lg: 1.5rem; --spacing-xl: 2rem;
             --radius-md: 0.5rem; --radius-xl: 1rem;
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); --transition-fast: 0.15s ease-in-out; --transition-normal: 0.3s ease-in-out;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --transition-fast: 0.15s ease-in-out; --transition-normal: 0.3s ease-in-out;
         }
         body { font-family: 'Inter', sans-serif; background-color: var(--bg-secondary); color: var(--text-primary); }
         .container { max-width: 1200px; margin: 0 auto; padding: var(--spacing-lg); }
+
+        /* --- Main UI Elements --- */
+        .file-explorer { background: var(--bg-primary); border-radius: var(--radius-xl); padding: var(--spacing-xl); box-shadow: var(--shadow-sm); border: 1px solid var(--gray-200); }
         .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-lg); }
         h2 { font-size: 24px; font-weight: 600; display: flex; align-items: center; gap: var(--spacing-md); }
         h2 i { color: var(--primary-color); }
         .breadcrumb { display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-lg); font-size: 14px; flex-wrap: wrap; }
         .breadcrumb a { color: var(--primary-color); text-decoration: none; font-weight: 500; }
         .breadcrumb span { color: var(--text-secondary); }
-        .file-explorer { background: var(--bg-primary); border-radius: var(--radius-xl); padding: var(--spacing-xl); box-shadow: var(--shadow-sm); border: 1px solid var(--gray-200); }
+
+        /* --- File List --- */
         .file-list { list-style: none; }
         .file-item { display: flex; align-items: center; padding: var(--spacing-md); border-bottom: 1px solid var(--gray-200); transition: var(--transition-normal); }
         .file-item:last-child { border-bottom: none; }
         .file-item:hover { background-color: var(--bg-secondary); }
         .file-icon { width: 32px; text-align: center; font-size: 18px; color: var(--primary-color); }
         .file-name { flex: 1; margin-left: var(--spacing-md); text-decoration: none; color: var(--text-primary); font-weight: 500; }
-        .file-actions { margin-left: auto; }
-        .file-actions a, .repo-link, .action-btn {
+        .checkbox-cell { padding-right: var(--spacing-md); }
+
+        /* --- Action Buttons --- */
+        .header-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); align-items: center; }
+        .file-actions { margin-left: auto; display: flex; gap: var(--spacing-sm); }
+        .action-btn {
             background: var(--bg-secondary); border: 1px solid var(--gray-200); border-radius: var(--radius-md);
             padding: var(--spacing-sm) var(--spacing-md); text-decoration: none; color: var(--text-secondary);
             font-size: 12px; font-weight: 500; transition: var(--transition-fast); display: inline-flex;
             align-items: center; gap: var(--spacing-sm); cursor: pointer;
         }
-        .file-actions a:hover, .repo-link:hover, .action-btn:hover { background-color: var(--gray-100); color: var(--text-primary); }
-        .header-actions { display: flex; gap: var(--spacing-md); }
-        
-        /* --- NEW STYLES FOR THE CUSTOM MODAL --- */
+        .action-btn:hover { background-color: var(--gray-100); color: var(--text-primary); }
+        .btn-paste { background-color: var(--secondary-color); color: white; border: none; }
+        .btn-paste:hover { background-color: #059669; color: white; }
+
+        /* --- Modal Styles --- */
         .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(15, 23, 42, 0.6);
-            backdrop-filter: blur(8px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.3s ease, visibility 0.3s ease;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px);
+            display: flex; align-items: center; justify-content: center; z-index: 1000;
+            opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease;
         }
-        .modal-overlay.active {
-            opacity: 1;
-            visibility: visible;
-        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
         .modal-content {
-            background: white;
-            padding: var(--spacing-xl);
-            border-radius: var(--radius-xl);
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-            width: 100%;
-            max-width: 450px;
-            transform: scale(0.95);
-            transition: transform 0.3s ease;
+            background: white; padding: var(--spacing-xl); border-radius: var(--radius-xl);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); width: 100%; max-width: 450px;
+            transform: scale(0.95); transition: transform 0.3s ease;
         }
-        .modal-overlay.active .modal-content {
-            transform: scale(1);
-        }
-        .modal-title {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: var(--spacing-md);
-            color: var(--text-primary);
-        }
+        .modal-overlay.active .modal-content { transform: scale(1); }
+        .modal-title { font-size: 20px; font-weight: 600; margin-bottom: var(--spacing-md); color: var(--text-primary); }
         .modal-input {
-            width: 100%;
-            border: 1px solid var(--gray-200);
+            width: 100%; border: 1px solid var(--gray-200); border-radius: var(--radius-md);
+            padding: 0.75rem; font-size: 14px; margin-bottom: var(--spacing-lg);
+        }
+        .modal-actions { display: flex; justify-content: flex-end; gap: var(--spacing-md); }
+        .modal-btn { padding: 0.6rem 1.2rem; border: none; border-radius: var(--radius-md); font-weight: 500; cursor: pointer; }
+        .btn-cancel { background-color: var(--bg-secondary); border: 1px solid var(--gray-200); color: var(--text-secondary); }
+        .btn-create { background-color: var(--primary-color); color: white; }
+
+        /* --- Toast Notification Styles --- */
+        #toast-notification {
+            visibility: hidden;
+            min-width: 280px;
+            background-color: var(--gray-700);
+            color: #fff;
+            text-align: center;
             border-radius: var(--radius-md);
-            padding: 0.75rem;
+            padding: var(--spacing-md);
+            position: fixed;
+            z-index: 2000;
+            right: 30px;
+            bottom: 30px;
             font-size: 14px;
-            margin-bottom: var(--spacing-lg);
-        }
-        .modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: var(--spacing-md);
-        }
-        .modal-btn {
-            padding: 0.6rem 1.2rem;
-            border: none;
-            border-radius: var(--radius-md);
             font-weight: 500;
-            cursor: pointer;
+            box-shadow: var(--shadow-md);
         }
-        .btn-cancel {
-            background-color: var(--bg-secondary);
-            border: 1px solid var(--gray-200);
-            color: var(--text-secondary);
+        #toast-notification.show {
+            visibility: visible;
+            animation: fadein 0.5s, fadeout 0.5s 2.5s;
         }
-        .btn-create {
-            background-color: var(--primary-color);
-            color: white;
-        }
+        #toast-notification.success { background-color: var(--secondary-color); }
+        #toast-notification.error { background-color: #ef4444; }
+        @keyframes fadein { from { bottom: 0; opacity: 0; } to { bottom: 30px; opacity: 1; } }
+        @keyframes fadeout { from { bottom: 30px; opacity: 1; } to { bottom: 0; opacity: 0; } }
     </style>
 </head>
 <body>
@@ -117,10 +110,19 @@
         <div class="file-explorer">
             <div class="section-header">
                 <h2><i class="fas fa-folder-open"></i> File Explorer: {{ repo_name }}</h2>
-                <div class="header-actions">
+            </div>
+            
+            <div class="header-actions">
+                <button id="paste-btn" class="action-btn btn-paste" style="display: none;" onclick="handlePaste('{{ path }}')"><i class="fas fa-paste"></i> Paste Here</button>
+                <div id="bulk-actions" style="display: none;">
+                    <button class="action-btn" onclick="handleBulkCut()"><i class="fas fa-cut"></i> Cut Selected</button>
+                    <button class="action-btn" onclick="handleBulkCopy()"><i class="fas fa-copy"></i> Copy Selected</button>
+                </div>
+                
+                <div style="margin-left: auto; display: flex; gap: var(--spacing-md);">
                     <button class="action-btn" onclick="openCreateModal('file')"><i class="fas fa-plus"></i> New File</button>
                     <button class="action-btn" onclick="openCreateModal('folder')"><i class="fas fa-folder-plus"></i> New Folder</button>
-                    <a href="{{ url_for('dashboard') }}" class="repo-link" style="background: var(--primary-color); color: white;"><i class="fas fa-arrow-left"></i> Dashboard</a>
+                    <a href="{{ url_for('dashboard') }}" class="action-btn" style="background: var(--primary-color); color: white;"><i class="fas fa-arrow-left"></i> Dashboard</a>
                 </div>
             </div>
 
@@ -133,14 +135,21 @@
             </div>
 
             <ul class="file-list">
+                <li class="file-item" style="font-weight: 600; background: var(--bg-secondary);">
+                    <div class="checkbox-cell"><input type="checkbox" id="select-all-checkbox" title="Select All"></div>
+                    <div class="file-name">Name</div>
+                    <div class="file-actions" style="visibility: hidden;"><button class="action-btn"><i class="fas fa-cut"></i></button><button class="action-btn"><i class="fas fa-copy"></i></button><a class="action-btn"><i class="fab fa-github"></i></a></div>
+                </li>
                 {% if path %}
                     <li class="file-item">
+                        <div class="checkbox-cell"></div>
                         <span class="file-icon"><i class="fas fa-level-up-alt"></i></span>
                         <a href="{{ url_for('view_repository', repo_name=repo_name, folder_path='/'.join(path.split('/')[:-1])) }}" class="file-name">..</a>
                     </li>
                 {% endif %}
                 {% for item in contents %}
                     <li class="file-item">
+                        <div class="checkbox-cell"><input type="checkbox" class="item-checkbox" value="{{ item.path }}"></div>
                         {% if item.type == 'dir' %}
                             <span class="file-icon"><i class="fas fa-folder" style="color: var(--accent-color);"></i></span>
                             <a href="{{ url_for('view_repository', repo_name=repo_name, folder_path=item.path) }}" class="file-name">{{ item.name }}</a>
@@ -149,7 +158,9 @@
                             <a href="{{ url_for('edit_file', repo_name=repo_name, file_path=item.path) }}" class="file-name">{{ item.name }}</a>
                         {% endif %}
                         <div class="file-actions">
-                            <a href="{{ item.html_url }}" target="_blank">View on GitHub <i class="fas fa-external-link-alt"></i></a>
+                            <button class="action-btn" title="Cut" onclick="handleCut('{{ item.path }}')"><i class="fas fa-cut"></i></button>
+                            <button class="action-btn" title="Copy" onclick="handleCopy('{{ item.path }}')"><i class="fas fa-copy"></i></button>
+                            <a href="{{ item.html_url }}" target="_blank" title="View on GitHub" class="action-btn"><i class="fab fa-github"></i></a>
                         </div>
                     </li>
                 {% endfor %}
@@ -157,92 +168,99 @@
         </div>
     </div>
 
-    <!-- Hidden forms that our JavaScript will still use to submit the data -->
-    <form id="new-file-form" action="{{ url_for('new_file', repo_name=repo_name) }}" method="post" style="display:none;">
-        <input type="hidden" name="current_path" value="{{ path }}">
-        <input type="hidden" id="new-file-name" name="file_name">
-    </form>
-    <form id="new-folder-form" action="{{ url_for('new_folder', repo_name=repo_name) }}" method="post" style="display:none;">
-        <input type="hidden" name="current_path" value="{{ path }}">
-        <input type="hidden" id="new-folder-name" name="folder_name">
-    </form>
-
-    <!-- The new, beautiful HTML modal -->
-    <div id="create-modal" class="modal-overlay">
-        <div class="modal-content">
-            <h3 id="modal-title" class="modal-title">Create New</h3>
-            <input type="text" id="modal-input" class="modal-input" placeholder="Enter name...">
-            <div class="modal-actions">
-                <button id="modal-cancel-btn" class="modal-btn btn-cancel">Cancel</button>
-                <button id="modal-create-btn" class="modal-btn btn-create">Create</button>
-            </div>
-        </div>
-    </div>
+    <!-- Hidden forms and Modal -->
+    <form id="new-file-form" action="{{ url_for('new_file', repo_name=repo_name) }}" method="post" style="display:none;"><input type="hidden" name="current_path" value="{{ path }}"><input type="hidden" id="new-file-name" name="file_name"></form>
+    <form id="new-folder-form" action="{{ url_for('new_folder', repo_name=repo_name) }}" method="post" style="display:none;"><input type="hidden" name="current_path" value="{{ path }}"><input type="hidden" id="new-folder-name" name="folder_name"></form>
+    <div id="create-modal" class="modal-overlay"><div class="modal-content"><h3 id="modal-title" class="modal-title">Create New</h3><input type="text" id="modal-input" class="modal-input" placeholder="Enter name..."><div class="modal-actions"><button id="modal-cancel-btn" class="modal-btn btn-cancel">Cancel</button><button id="modal-create-btn" class="modal-btn btn-create">Create</button></div></div></div>
+    
+    <!-- Toast Notification Element -->
+    <div id="toast-notification"></div>
 
     <script>
-        // Get all the elements we need to interact with
-        const modal = document.getElementById('create-modal');
-        const modalTitle = document.getElementById('modal-title');
-        const modalInput = document.getElementById('modal-input');
-        const createBtn = document.getElementById('modal-create-btn');
-        const cancelBtn = document.getElementById('modal-cancel-btn');
-        
-        let currentCreateType = ''; // This will be 'file' or 'folder'
+        // --- ALL JAVASCRIPT LOGIC ---
+        // Get references to all necessary DOM elements
+        const modal = document.getElementById('create-modal'), modalTitle = document.getElementById('modal-title'), modalInput = document.getElementById('modal-input'), createBtn = document.getElementById('modal-create-btn'), cancelBtn = document.getElementById('modal-cancel-btn');
+        const selectAllCheckbox = document.getElementById('select-all-checkbox'), itemCheckboxes = document.querySelectorAll('.item-checkbox'), bulkActionsDiv = document.getElementById('bulk-actions');
+        const pasteBtn = document.getElementById('paste-btn'), toastElement = document.getElementById('toast-notification');
+        let currentCreateType = '', toastTimeout;
 
-        // This function opens the modal and sets it up
-        function openCreateModal(type) {
-            currentCreateType = type;
-            if (type === 'file') {
-                modalTitle.textContent = 'Create New File';
-                modalInput.placeholder = 'e.g., about.html';
-            } else {
-                modalTitle.textContent = 'Create New Folder';
-                modalInput.placeholder = 'e.g., images';
-            }
-            modal.classList.add('active');
-            modalInput.focus(); // Automatically focus the input field
+        // --- Create Modal Logic ---
+        const openCreateModal = type => { currentCreateType = type; modalTitle.textContent = type === 'file' ? 'Create New File' : 'Create New Folder'; modalInput.placeholder = type === 'file' ? 'e.g., about.html' : 'e.g., images'; modal.classList.add('active'); modalInput.focus(); };
+        const closeCreateModal = () => { modal.classList.remove('active'); modalInput.value = ''; };
+        const handleCreate = () => { const newName = modalInput.value; if (!newName) { return alert('Name cannot be empty.'); } if (currentCreateType === 'file') { document.getElementById('new-file-name').value = newName; document.getElementById('new-file-form').submit(); } else { document.getElementById('new-folder-name').value = newName; document.getElementById('new-folder-form').submit(); } closeCreateModal(); };
+        createBtn.addEventListener('click', handleCreate); cancelBtn.addEventListener('click', closeCreateModal); modalInput.addEventListener('keyup', e => e.key === 'Enter' && handleCreate()); modal.addEventListener('click', e => e.target === modal && closeCreateModal());
+
+        // --- Toast Notification Logic ---
+        function showToast(message, type = 'info') {
+            clearTimeout(toastTimeout);
+            toastElement.textContent = message;
+            toastElement.className = 'show';
+            if (type === 'success') toastElement.classList.add('success');
+            if (type === 'error') toastElement.classList.add('error');
+            toastTimeout = setTimeout(() => { toastElement.className = toastElement.className.replace('show', ''); }, 3000);
         }
 
-        // This function closes the modal
-        function closeCreateModal() {
-            modal.classList.remove('active');
-            modalInput.value = ''; // Clear the input for next time
-        }
+        // --- Checkbox & Bulk Action Logic ---
+        const updateBulkActionButtons = () => { const checkedCount = document.querySelectorAll('.item-checkbox:checked').length; bulkActionsDiv.style.display = checkedCount > 0 ? 'flex' : 'none'; selectAllCheckbox.checked = itemCheckboxes.length > 0 && checkedCount === itemCheckboxes.length; };
+        selectAllCheckbox.addEventListener('click', () => { itemCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked); updateBulkActionButtons(); });
+        itemCheckboxes.forEach(cb => cb.addEventListener('click', updateBulkActionButtons));
+
+        // --- Cut, Copy, Paste Logic ---
+        document.addEventListener('DOMContentLoaded', () => { if (sessionStorage.getItem('clipboard_path')) pasteBtn.style.display = 'inline-flex'; });
+        const getSelectedPaths = () => Array.from(document.querySelectorAll('.item-checkbox:checked')).map(cb => cb.value);
+        const setClipboard = (paths, operation) => { sessionStorage.setItem('clipboard_path', JSON.stringify(paths)); sessionStorage.setItem('clipboard_op', operation); pasteBtn.style.display = 'inline-flex'; };
         
-        // This function handles the final submission
-        function handleCreate() {
-            const newName = modalInput.value;
-            if (newName) { // Make sure the user typed something
-                if (currentCreateType === 'file') {
-                    document.getElementById('new-file-name').value = newName;
-                    document.getElementById('new-file-form').submit();
-                } else {
-                    document.getElementById('new-folder-name').value = newName;
-                    document.getElementById('new-folder-form').submit();
+        function handleCut(path) { setClipboard([path], 'cut'); showToast(`Cut '${path.split('/').pop()}'`); }
+        function handleCopy(path) { setClipboard([path], 'copy'); showToast(`Copied '${path.split('/').pop()}'`); }
+        function handleBulkCut() { const paths = getSelectedPaths(); if (paths.length === 0) return alert('Please select items.'); setClipboard(paths, 'cut'); showToast(`Cut ${paths.length} items.`); }
+        function handleBulkCopy() { const paths = getSelectedPaths(); if (paths.length === 0) return alert('Please select items.'); setClipboard(paths, 'copy'); showToast(`Copied ${paths.length} items.`); }
+        
+        function handlePaste(destinationPath) {
+            const sourcePathsJSON = sessionStorage.getItem('clipboard_path');
+            const operation = sessionStorage.getItem('clipboard_op');
+            if (!sourcePathsJSON) return;
+
+            const sourcePaths = JSON.parse(sourcePathsJSON);
+            
+            // Frontend validation to prevent invalid moves
+            for (const sourcePath of sourcePaths) {
+                const sourceParentPath = sourcePath.includes('/') ? sourcePath.substring(0, sourcePath.lastIndexOf('/')) : '';
+                if (sourceParentPath === destinationPath && operation === 'cut') {
+                    return showToast("Cannot move an item to its current location.", 'error');
                 }
-                closeCreateModal();
-            } else {
-                alert('Name cannot be empty.'); // A simple validation
+                if (destinationPath.startsWith(sourcePath + '/')) {
+                    return showToast("Cannot paste a folder into itself.", 'error');
+                }
             }
+
+            pasteBtn.disabled = true;
+            pasteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Pasting...';
+
+            fetch(`/api/repo/{{ repo_name }}/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source_path: sourcePaths, destination_path: destinationPath, operation: operation })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    sessionStorage.removeItem('clipboard_path');
+                    sessionStorage.removeItem('clipboard_op');
+                    showToast('Operation successful!', 'success');
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    alert('An error occurred on the server: ' + data.error);
+                    pasteBtn.disabled = false;
+                    pasteBtn.innerHTML = '<i class="fas fa-paste"></i> Paste Here';
+                }
+            })
+            .catch(err => {
+                alert("A network or server error occurred. Please check the console for details.");
+                console.error("Paste Error:", err);
+                pasteBtn.disabled = false;
+                pasteBtn.innerHTML = '<i class="fas fa-paste"></i> Paste Here';
+            });
         }
-
-        // Add event listeners to our buttons and the modal itself
-        createBtn.addEventListener('click', handleCreate);
-        cancelBtn.addEventListener('click', closeCreateModal);
-        
-        // Allow pressing 'Enter' to submit
-        modalInput.addEventListener('keyup', function(event) {
-            if (event.key === 'Enter') {
-                handleCreate();
-            }
-        });
-
-        // Allow clicking the dark background to close the modal
-        modal.addEventListener('click', function(event) {
-            if (event.target === modal) {
-                closeCreateModal();
-            }
-        });
     </script>
 </body>
 </html>
