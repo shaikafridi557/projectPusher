@@ -6,6 +6,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from utils.repo_utils import move_or_copy_item
 import uuid
 
 # --- NEW IMPORTS FOR MONGODB ---
@@ -86,6 +87,44 @@ def github_login():
     session["github_user"] = resp.json()
     return redirect(url_for("dashboard"))
 
+@app.route("/api/repo/<repo_name>/move", methods=["POST"])
+def move_item_in_repo(repo_name):
+    """
+    API endpoint to handle moving or copying a SINGLE item or a LIST of items.
+    """
+    if not github.authorized or "github_user" not in session:
+        return jsonify({"success": False, "error": "Not authorized"}), 401
+
+    data = request.get_json()
+    source_path = data.get("source_path") # This can now be a string OR a list of strings
+    destination_path = data.get("destination_path")
+    operation = data.get("operation")
+
+    if not all([source_path, operation]):
+        return jsonify({"success": False, "error": "Missing source path or operation type."}), 400
+
+    access_token = github.token["access_token"]
+    owner = session["github_user"]["login"]
+
+    # If the source_path is not a list, make it a list with one item for consistent processing
+    source_paths = source_path if isinstance(source_path, list) else [source_path]
+
+    # Loop through each source path and perform the operation
+    for path in source_paths:
+        result = move_or_copy_item(
+            token=access_token,
+            owner=owner,
+            repo_name=repo_name,
+            source_path=path,
+            destination_path=destination_path,
+            operation=operation
+        )
+        # If any single operation fails, stop and return the error immediately
+        if not result["success"]:
+            return jsonify(result)
+
+    # If all operations in the loop succeeded
+    return jsonify({"success": True})
 @app.route("/dashboard")
 def dashboard():
     if not github.authorized or "github_user" not in session:
