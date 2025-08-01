@@ -1,32 +1,26 @@
-# This is a render.yaml file.
-# It tells Render how to build and run your services.
-# Push this file to your GitHub repository and Render will do the rest.
+# This is the corrected render.yaml file.
 
 services:
   # ----------------------------------
   # 1. The Web Service for your Flask App
   # ----------------------------------
   - type: web
-    name: projectpusher-web  # You can name this whatever you like
+    name: projectpusher-web
     env: python
-    # This command installs all the libraries from your requirements.txt
     buildCommand: "pip install -r requirements.txt"
-    # This command starts your Flask app using the Gunicorn production server
     startCommand: "gunicorn app:app"
-    # This section links to your environment variable group
-    envVarGroups:
-      - name: projectpusher-env # The name of the group you will create in the Render Dashboard
+    # This is the CORRECT way to link an environment group
+    envVars:
+      - fromGroup: projectpusher-env # Make sure this is the exact name of your group
 
   # ----------------------------------
   # 2. The Background Worker for your worker.py
   # ----------------------------------
   - type: worker
-    name: projectpusher-worker # You can name this whatever you like
+    name: projectpusher-worker
     env: python
-    # The worker needs the same libraries, so it uses the same build command
     buildCommand: "pip install -r requirements.txt"
-    # This command starts your worker script
     startCommand: "python worker.py"
-    # This worker uses the same secrets and keys, so it links to the same group
-    envVarGroups:
-      - name: projectpusher-env # The name of the group you will create in the Render Dashboard
+    # Link the same group to the worker
+    envVars:
+      - fromGroup: projectpusher-env # Make sure this is the exact name of your group
