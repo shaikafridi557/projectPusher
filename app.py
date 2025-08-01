@@ -8,6 +8,9 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 from utils.repo_utils import move_or_copy_item
 import uuid
+# --- NEW IMPORTS ---
+import threading # To run the worker in the background
+from worker import process_jobs # Import the worker's main function
 
 # --- NEW IMPORTS FOR MONGODB ---
 from flask_pymongo import PyMongo
@@ -134,6 +137,13 @@ def dashboard():
     repos = get_user_repos(access_token)
     
     return render_template("dashboard.html", user=session["github_user"], repos=repos)
+# This block will only run when the app is started by Gunicorn in production
+if __name__ != '__main__':
+    # Create a new thread object that will run the process_jobs function
+    worker_thread = threading.Thread(target=process_jobs, daemon=True)
+    # Start the thread
+    worker_thread.start()
+    print("Background worker thread started.")
 
 
 # --- MODIFIED /upload ROUTE FOR MONGODB ---
