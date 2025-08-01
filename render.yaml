@@ -1,4 +1,4 @@
-# This is the corrected render.yaml file.
+# This is the final render.yaml file for free deployment.
 
 services:
   # ----------------------------------
@@ -7,11 +7,11 @@ services:
   - type: web
     name: projectpusher-web
     env: python
+    plan: free # <--- ADD THIS LINE to specify the free instance type
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
-    # This is the CORRECT way to link an environment group
     envVars:
-      - fromGroup: projectpusher-env # Make sure this is the exact name of your group
+      - fromGroup: projectpusher-env 
 
   # ----------------------------------
   # 2. The Background Worker for your worker.py
@@ -19,8 +19,8 @@ services:
   - type: worker
     name: projectpusher-worker
     env: python
+    plan: free # <--- ADD THIS LINE to specify the free instance type
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python worker.py"
-    # Link the same group to the worker
     envVars:
-      - fromGroup: projectpusher-env # Make sure this is the exact name of your group
+      - fromGroup: projectpusher-env
