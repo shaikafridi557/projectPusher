@@ -1,13 +1,17 @@
 import os
 from collections import defaultdict
-
 from flask import Flask, redirect, url_for, render_template, session, request, flash, jsonify
 from flask_dance.contrib.github import make_github_blueprint, github
 from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
+from datetime import datetime
+import uuid
 
-# --- UPDATED IMPORT LIST ---
-# Import all necessary functions from your utility file, including the new ones for analytics.
+# --- NEW IMPORTS FOR MONGODB ---
+from flask_pymongo import PyMongo
+
+# --- YOUR EXISTING UTILS IMPORTS ---
 from utils.repo_utils import (
     create_repo_from_zip, 
     get_user_repos, 
@@ -17,7 +21,6 @@ from utils.repo_utils import (
     create_new_file,
     create_new_folder,
     delete_repo,
-    # New functions for analytics
     get_repo_stats,
     get_repo_languages
 )
@@ -30,33 +33,38 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# --- App Configuration ---
-# This is the final, correct configuration for session cookies and deployment.
+# --- App Configuration (Updated for MongoDB) ---
 app.config.update(
     SECRET_KEY=os.environ.get("FLASK_SECRET_KEY"),
-    SESSION_COOKIE_SAMESITE='Lax', 
+    SESSION_COOKIE_SAMESITE='Lax',
+    # --- NEW: MONGODB CONFIGURATION ---
+    # This reads the connection string from your .env file
+    MONGO_URI=os.environ.get("MONGO_URI")
 )
 # This is required for running behind a reverse proxy (common in production).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 if not app.config["SECRET_KEY"]:
     raise ValueError("FLASK_SECRET_KEY is not set in your environment.")
+if not app.config["MONGO_URI"]:
+    raise ValueError("MONGO_URI is not set in your environment.")
 
-# This allows OAuth to work on http:// for local development.
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# --- GitHub OAuth Blueprint ---
-# This is the final, correct configuration for the GitHub login blueprint.
+# --- NEW: MONGODB SETUP ---
+mongo = PyMongo(app)
+
+# --- GitHub OAuth Blueprint (Unchanged) ---
 github_bp = make_github_blueprint(
     client_id=os.environ.get("GITHUB_CLIENT_ID"),
     client_secret=os.environ.get("GITHUB_CLIENT_SECRET"),
-    scope=["repo", "delete_repo"], # The correct scope list for all features.
+    scope=["repo", "delete_repo"],
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
 
 
-# --- Standard Application Routes ---
+# --- Standard Application Routes (Unchanged) ---
 
 @app.route("/")
 def home():
@@ -80,7 +88,6 @@ def github_login():
 
 @app.route("/dashboard")
 def dashboard():
-    """Renders the main dashboard. Analytics data is loaded by a separate API call from the frontend."""
     if not github.authorized or "github_user" not in session:
         return redirect(url_for("home"))
     
@@ -89,81 +96,103 @@ def dashboard():
     
     return render_template("dashboard.html", user=session["github_user"], repos=repos)
 
+
+# --- MODIFIED /upload ROUTE FOR MONGODB ---
 @app.route("/upload", methods=["POST"])
 def upload():
-    if "github_user" not in session: return redirect(url_for("home"))
+    if "github_user" not in session: 
+        return redirect(url_for("home"))
+        
     project_file = request.files.get("project")
     repo_name = request.form.get("repo_name")
-    if not project_file or not repo_name:
-        return render_error_page("Missing project zip file or repository name.")
-    if not project_file.filename.lower().endswith('.zip'):
-        return render_error_page("Invalid file type. Please upload a .zip file.")
-        
-    access_token = github.token["access_token"]
-    result = create_repo_from_zip(access_token, project_file, repo_name)
     
-    if result.get("success"):
-        return render_success_page(result['repo_url'], result['repo_name'])
-    else:
-        return render_error_page(result.get('error'))
+    if not project_file or not repo_name:
+        flash("Missing project file or repository name.", "error")
+        return redirect(url_for("dashboard"))
+        
+    if not project_file.filename.lower().endswith('.zip'):
+        flash("Invalid file type. Please upload a .zip file.", "error")
+        return redirect(url_for("dashboard"))
 
-# --- NEW API ROUTE FOR DYNAMIC ANALYTICS ---
+    access_token = github.token["access_token"]
+    
+    # Step 1: Securely save the uploaded file to a temporary directory on the server
+    temp_dir = os.path.join(app.root_path, 'tmp', 'uploads')
+    os.makedirs(temp_dir, exist_ok=True)
+    filename = secure_filename(f"{session['github_user']['login']}_{repo_name}_{os.urandom(4).hex()}.zip")
+    temp_filepath = os.path.join(temp_dir, filename)
+    project_file.save(temp_filepath)
+
+    # Step 2: Create a job document in the MongoDB 'jobs' collection
+    job_id = str(uuid.uuid4())
+    job_document = {
+        "_id": job_id,
+        "status": "queued",
+        "created_at": datetime.utcnow(),
+        "access_token": access_token,
+        "temp_filepath": temp_filepath,
+        "repo_name": repo_name,
+        "result": None
+    }
+    mongo.db.jobs.insert_one(job_document)
+
+    # Step 3: Immediately redirect the user to a new status page with the job's ID
+    return redirect(url_for("upload_status", job_id=job_id))
+
+
+# --- NEW ROUTES FOR MONGODB STATUS CHECKING ---
+
+@app.route("/upload/status/<job_id>")
+def upload_status(job_id):
+    """Renders a user-facing page that will poll for the job's status."""
+    return render_template("upload_status.html", job_id=job_id)
+
+# --- MODIFIED API ENDPOINT ---
+@app.route("/api/upload/status/<job_id>")
+def api_upload_status(job_id):
+    """Provides the status and progress of a background job from MongoDB."""
+    # Project only the fields we need
+    job = mongo.db.jobs.find_one(
+        {"_id": job_id},
+        {"_id": 0, "status": 1, "result": 1, "progress": 1} 
+    )
+    if job:
+        response_data = {
+            'status': job['status'],
+            'result': job.get('result'),
+            'progress': job.get('progress') # <-- ADD THIS LINE
+        }
+    else:
+        response_data = {'status': 'not_found'}
+
+    return jsonify(response_data)
+# --- API, IDE, and Repo Management Routes (Unchanged) ---
+
 @app.route("/api/dashboard_analytics")
 def dashboard_analytics():
-    """Provides real-time analytics data for the dashboard via a fetch request."""
-    if not github.authorized or "github_user" not in session:
-        return jsonify({"error": "Not authorized"}), 401
-    
+    if not github.authorized or "github_user" not in session: return jsonify({"error": "Not authorized"}), 401
     access_token = github.token["access_token"]
     owner = session["github_user"]["login"]
     repos = get_user_repos(access_token)
-    
-    if not repos:
-        return jsonify({
-            "total_stars": 0, "language_stats": {}, "top_language": "N/A",
-            "commit_history": [0]*52
-        })
-
-    # Calculate Total Stars
+    if not repos: return jsonify({"total_stars": 0, "language_stats": {}, "top_language": "N/A", "commit_history": [0]*52})
     total_stars = sum(repo.get('stargazers_count', 0) for repo in repos)
-
-    # Aggregate Language Statistics
     language_stats = defaultdict(int)
     for repo in repos:
-        primary_language = repo.get("language")
-        if primary_language:
-            language_stats[primary_language] += 1
-    
+        if repo.get("language"): language_stats[repo.get("language")] += 1
     sorted_languages = sorted(language_stats.items(), key=lambda item: item[1], reverse=True)
     top_language = sorted_languages[0][0] if sorted_languages else "N/A"
-    
-    # Prepare data for doughnut chart (Top 5 languages + "Other")
     top_5_languages = dict(sorted_languages[:5])
     other_count = sum(count for lang, count in sorted_languages[5:])
-    if other_count > 0:
-        top_5_languages['Other'] = other_count
-
-    # Aggregate Commit History (fetches from the 5 most recently updated repos for performance)
+    if other_count > 0: top_5_languages['Other'] = other_count
     commit_history = [0] * 52
     recent_repos = sorted(repos, key=lambda x: x['updated_at'], reverse=True)[:5]
-    
     for repo in recent_repos:
         stats_result = get_repo_stats(access_token, owner, repo['name'], 'participation')
         if stats_result["success"] and stats_result["data"]:
             user_commits = stats_result["data"].get("owner", [])
             for i, count in enumerate(user_commits):
-                if i < 52:
-                    commit_history[i] += count
-    
-    return jsonify({
-        "total_stars": total_stars,
-        "language_stats": top_5_languages,
-        "top_language": top_language,
-        "commit_history": commit_history
-    })
-
-
-# --- IDE and Repo Management Routes ---
+                if i < 52: commit_history[i] += count
+    return jsonify({"total_stars": total_stars, "language_stats": top_5_languages, "top_language": top_language, "commit_history": commit_history})
 
 @app.route("/repo/<repo_name>/", defaults={'folder_path': ''})
 @app.route("/repo/<repo_name>/<path:folder_path>")
@@ -171,35 +200,28 @@ def view_repository(repo_name, folder_path):
     if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
     access_token, owner = github.token["access_token"], session["github_user"]["login"]
     result = get_repo_contents(access_token, owner, repo_name, path=folder_path)
-    if result.get("success"):
-        return render_template("repository_view.html", repo_name=repo_name, contents=result["contents"], path=folder_path, breadcrumbs=folder_path.split('/') if folder_path else [])
-    else:
-        return render_error_page(result.get("error"))
+    if result.get("success"): return render_template("repository_view.html", repo_name=repo_name, contents=result["contents"], path=folder_path, breadcrumbs=folder_path.split('/') if folder_path else [])
+    else: return render_error_page(result.get("error"))
 
 @app.route("/repo/<repo_name>/edit/<path:file_path>")
 def edit_file(repo_name, file_path):
     if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
     access_token, owner = github.token["access_token"], session["github_user"]["login"]
     result = get_file_content(access_token, owner, repo_name, file_path)
-    if result.get("success"):
-        return render_template("file_editor.html", repo_name=repo_name, file_path=file_path, content=result["content"], sha=result["sha"], is_binary=result["is_binary"])
-    else:
-        return render_error_page(result.get("error"))
+    if result.get("success"): return render_template("file_editor.html", repo_name=repo_name, file_path=file_path, content=result["content"], sha=result["sha"], is_binary=result["is_binary"])
+    else: return render_error_page(result.get("error"))
 
 @app.route("/repo/<repo_name>/save/<path:file_path>", methods=["POST"])
 def save_file(repo_name, file_path):
     if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
     access_token, owner = github.token["access_token"], session["github_user"]["login"]
     new_content, commit_message, sha = request.form.get("content"), request.form.get("commit_message"), request.form.get("sha")
-    if new_content is None or not commit_message or not sha:
-        return render_error_page("Missing content, commit message, or file SHA for saving.")
+    if new_content is None or not commit_message or not sha: return render_error_page("Missing content, commit message, or file SHA for saving.")
     result = update_file_in_repo(access_token, owner, repo_name, file_path, new_content, commit_message, sha)
     if result.get("success"):
         flash(f"Successfully committed '{file_path}'!", "success")
-        parent_folder = os.path.dirname(file_path)
-        return redirect(url_for("view_repository", repo_name=repo_name, folder_path=parent_folder))
-    else:
-        return render_error_page(result.get("error"))
+        return redirect(url_for("view_repository", repo_name=repo_name, folder_path=os.path.dirname(file_path)))
+    else: return render_error_page(result.get("error"))
 
 @app.route("/repo/<repo_name>/new_file", methods=["POST"])
 def new_file(repo_name):
@@ -208,13 +230,11 @@ def new_file(repo_name):
     current_path, new_file_name = request.form.get("current_path", ""), request.form.get("file_name")
     if not new_file_name: return render_error_page("New file name cannot be empty.")
     full_path = os.path.join(current_path, new_file_name).replace("\\", "/")
-    commit_message = f"feat: Create new file '{new_file_name}'"
-    result = create_new_file(access_token, owner, repo_name, full_path, commit_message)
+    result = create_new_file(access_token, owner, repo_name, full_path, f"feat: Create new file '{new_file_name}'")
     if result.get("success"):
         flash(f"Successfully created file '{new_file_name}'!", "success")
         return redirect(url_for("edit_file", repo_name=repo_name, file_path=full_path))
-    else:
-        return render_error_page(result.get("error"))
+    else: return render_error_page(result.get("error"))
 
 @app.route("/repo/<repo_name>/new_folder", methods=["POST"])
 def new_folder(repo_name):
@@ -227,29 +247,25 @@ def new_folder(repo_name):
     if result.get("success"):
         flash(f"Successfully created folder '{new_folder_name}'!", "success")
         return redirect(url_for("view_repository", repo_name=repo_name, folder_path=full_path))
-    else:
-        return render_error_page(result.get("error"))
+    else: return render_error_page(result.get("error"))
 
 @app.route("/delete_repo/<repo_name>", methods=["POST"])
 def delete_repo_route(repo_name):
     if not github.authorized or "github_user" not in session: return redirect(url_for("home"))
     access_token, owner = github.token["access_token"], session["github_user"]["login"]
     result = delete_repo(access_token, owner, repo_name)
-    if result.get("success"):
-        flash(f"Repository '{repo_name}' has been permanently deleted.", "success")
-    else:
-        flash(f"Error deleting repository '{repo_name}': {result.get('error')}", "error")
+    if result.get("success"): flash(f"Repository '{repo_name}' has been permanently deleted.", "success")
+    else: flash(f"Error deleting repository '{repo_name}': {result.get('error')}", "error")
     return redirect(url_for("dashboard"))
 
 @app.route("/logout")
 def logout():
-    """Logs the user out by clearing the session."""
     session.clear()
     flash("You have been successfully logged out.", "info")
     return redirect(url_for("home"))
 
-# --- HTML Rendering Helper Functions ---
-# (These are kept as they are, providing self-contained pages for success/error states)
+
+# --- HTML Rendering Helper Functions (Unchanged) ---
 
 def render_success_page(repo_url, repo_name):
     """Renders a professional success page with modern styling."""
@@ -265,6 +281,4 @@ def render_error_page(error_message):
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    # debug=True provides helpful error pages and auto-reloads the server on code changes.
-    # Make sure to set debug=False in a production environment.
     app.run(debug=True, port=5000)
