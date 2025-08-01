@@ -1,10 +1,9 @@
 Flask
-Flask-Dance
+flask-dance
 requests
+PyMongo
 python-dotenv
-gunicorn
-werkzeug
-gitpython
-redis
-rq 
-flask-pymongo
+Werkzeug
+uuid
+gunicorn  # <-- Add this for production
+GitPython # <-- You were using this in an older version, make sure it's here
