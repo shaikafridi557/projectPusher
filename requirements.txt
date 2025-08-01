@@ -1,0 +1,9 @@
+Flask
+flask-dance
+requests
+PyMongo
+python-dotenv
+Werkzeug
+uuid
+gunicorn  # <-- Add this for production
+GitPython # <-- You were using this in an older version, make sure it's here
