@@ -92,9 +92,33 @@
         .pagination-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         #page-info { color: var(--text-secondary); }
 
-        /* --- Style for new full-width chart section --- */
-        .chart-section.full-width {
-            grid-column: 1 / -1; /* Make this section span the full width of the grid */
+        .chart-section.full-width { grid-column: 1 / -1; }
+
+        /* --- NEW STYLE FOR THE PRIVATE REPO CHECKBOX --- */
+        .form-group-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: var(--spacing-lg);
+            background-color: var(--bg-secondary);
+            padding: 12px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--gray-200);
+        }
+        .form-group-checkbox input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--primary-color);
+        }
+        .form-group-checkbox label {
+            margin: 0;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-primary);
         }
     </style>
 </head>
@@ -171,6 +195,8 @@
                     <h2><i class="fas fa-upload"></i> Upload New Project</h2>
                     <p>Create a new repository from your local project</p>
                 </div>
+                
+                <!-- === THIS IS THE MODIFIED FORM === -->
                 <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
                     <div class="form-group">
                         <label for="project-file"><i class="fas fa-file-archive"></i> Project ZIP File</label>
@@ -186,6 +212,15 @@
                         <label for="repo_name"><i class="fas fa-tag"></i> Repository Name</label>
                         <input type="text" id="repo_name" name="repo_name" placeholder="e.g., my-awesome-project" required>
                     </div>
+
+                    <!-- === NEW "PRIVATE REPOSITORY" CHECKBOX === -->
+                    <div class="form-group-checkbox">
+                        <input type="checkbox" id="private_repo" name="is_private" value="true">
+                        <label for="private_repo">
+                            <i class="fas fa-lock"></i> Make this repository private
+                        </label>
+                    </div>
+
                     <button type="submit" class="submit-btn"><i class="fas fa-rocket"></i><span>Create & Upload</span></button>
                 </form>
             </section>
@@ -210,19 +245,28 @@
         </section>
 
         <!-- ============================================================= -->
-        <!-- === NEW USER EDUCATION & SECURITY BEST PRACTICES SECTION === -->
-        <!-- This card has been added to explain best practices to the user. -->
-        <!-- It's styled to match the "instruction-card" but with a different color. -->
+        <!-- === UPDATED USER EDUCATION & SECURITY BEST PRACTICES SECTION === -->
         <!-- ============================================================= -->
         <section class="instruction-card" style="background: linear-gradient(135deg, #0f766e, #10b981);">
             <div class="instruction-icon"><i class="fas fa-shield-alt"></i></div>
             <div class="instruction-content">
                 <h3>Pro Tips for a Secure & Fast Upload</h3>
-                <p>To ensure your project is safe and uploads quickly, please follow these best practices:</p>
+                <p>To ensure your project is safe and uploads quickly, please follow these professional best practices:</p>
                 <ul style="list-style: none; padding-left: 0; margin-top: var(--spacing-md); font-size: 14px; line-height: 1.8;">
-                    <li style="margin-bottom: 8px;"><i class="fas fa-key" style="margin-right: 8px; color: #f59e0b;"></i> <strong>Remove Secret Keys:</strong> Never include API keys or passwords directly in your code. Your upload will be blocked by GitHub for your protection.</li>
-                    <li style="margin-bottom: 8px;"><i class="fas fa-broom" style="margin-right: 8px; color: #3b82f6;"></i> <strong>Clean Your Project:</strong> Before zipping, delete large folders like <code>node_modules</code> or <code>venv</code>. Our system tries to clean them, but a clean .zip is always faster.</li>
-                    <li><i class="fas fa-file-code" style="margin-right: 8px; color: #8b5cf6;"></i> <strong>What to Include:</strong> Your .zip file should only contain your essential source code, images, and other assets needed to run the project.</li>
+                    <li style="margin-bottom: 8px;">
+                        <i class="fas fa-key" style="margin-right: 8px; color: #f59e0b;"></i>
+                        <strong>Never Hardcode Secrets!</strong> Your code should not contain API keys or passwords. Instead, load them from environment variables.
+                        <br><em>Example (Python):</em> <code>my_secret = os.environ.get("MY_API_KEY")</code>
+                        <br>Your upload will be blocked by GitHub if secrets are found.
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <i class="fas fa-file-alt" style="margin-right: 8px; color: #10b981;"></i>
+                        <strong>Use a <code>.env</code> File:</strong> For local development, store your keys in a <code>.env</code> file, and make sure your <code>.gitignore</code> lists <code>.env</code> so it is never uploaded.
+                    </li>
+                    <li>
+                        <i class="fas fa-broom" style="margin-right: 8px; color: #3b82f6;"></i>
+                        <strong>Clean Your Project:</strong> Before zipping, delete large folders like <code>node_modules</code> or <code>venv</code>.
+                    </li>
                 </ul>
             </div>
         </section>
@@ -554,7 +598,6 @@
                 const prevButton = this.createPaginationButton('<i class="fas fa-chevron-left"></i>', this.currentPage - 1, this.currentPage === 1);
                 buttonsWrapper.appendChild(prevButton);
                 
-                // Smart pagination logic
                 let pagesToShow = [1, totalPages, this.currentPage, this.currentPage-1, this.currentPage+1];
                 pagesToShow = [...new Set(pagesToShow.filter(p => p > 0 && p <= totalPages))].sort((a,b)=>a-b);
                 let lastPage = 0;
