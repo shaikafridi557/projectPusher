@@ -7,4 +7,5 @@ Werkzeug
 uuid
 gunicorn  # <-- Add this for production
 GitPython
-Flask-PyMongo   # <-- You were using this in an older version, make sure it's here
+Flask-PyMongo 
+backoff  # <-- You were using this in an older version, make sure it's here
