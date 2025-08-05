@@ -8,14 +8,16 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 from utils.repo_utils import move_or_copy_item
 import uuid
-import threading
-from worker import process_jobs # Make sure this filename matches yours
+# --- NEW IMPORTS ---
+import threading # To run the worker in the background
+from worker import process_jobs # Import the worker's main function
+
+# --- NEW IMPORTS FOR MONGODB ---
 from flask_pymongo import PyMongo
 
 # --- YOUR EXISTING UTILS IMPORTS ---
 from utils.repo_utils import (
     create_repo_from_zip, 
-    create_repo_from_zip_with_git, # Added for completeness
     get_user_repos, 
     get_repo_contents, 
     get_file_content, 
@@ -30,59 +32,31 @@ from utils.repo_utils import (
 # This setting is the final fix for the OAuth scope warning
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
-# Load environment variables from a .env file for local development
+# Load environment variables from a .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-
-# =========================================================================
-# === THIS ENTIRE BLOCK IS THE REPLACEMENT ===
-# It robustly configures the app and tests the database connection at startup.
-# =========================================================================
-
-# --- App Configuration & Diagnostics ---
-mongo_uri_from_env = os.environ.get("MONGO_URI")
-print("--- STARTUP DIAGNOSTICS ---")
-if mongo_uri_from_env:
-    print(f"SUCCESS: MONGO_URI environment variable found.")
-    # We print the start of the URI to confirm it's not localhost
-    print(f"   URI starts with: {mongo_uri_from_env[:25]}...")
-else:
-    print("CRITICAL_ERROR: MONGO_URI environment variable was NOT FOUND.")
-print("--- END OF DIAGNOSTICS ---")
-
+# --- App Configuration (Updated for MongoDB) ---
 app.config.update(
     SECRET_KEY=os.environ.get("FLASK_SECRET_KEY"),
     SESSION_COOKIE_SAMESITE='Lax',
-    MONGO_URI=mongo_uri_from_env
+    # --- NEW: MONGODB CONFIGURATION ---
+    # This reads the connection string from your .env file
+    MONGO_URI=os.environ.get("MONGO_URI")
 )
-
+# This is required for running behind a reverse proxy (common in production).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 if not app.config["SECRET_KEY"]:
     raise ValueError("FLASK_SECRET_KEY is not set in your environment.")
+if not app.config["MONGO_URI"]:
+    raise ValueError("MONGO_URI is not set in your environment.")
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# --- Robust MongoDB Initialization ---
-mongo = PyMongo()
-try:
-    # Initialize PyMongo with the app configuration
-    mongo.init_app(app)
-    # This command forces a connection test. If it fails, the 'except' block will run.
-    mongo.cx.admin.command('ping')
-    print("SUCCESS: MongoDB connection via PyMongo is successful.")
-except Exception as e:
-    # This will print the REAL connection error to your Render logs
-    print("!!!!!!!!!! CRITICAL PYMONGO CONNECTION ERROR !!!!!!!!!!")
-    print(f"   THE REAL ERROR IS: {e}")
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-
-# =========================================================================
-# === END OF REPLACEMENT BLOCK ===
-# =========================================================================
-
+# --- NEW: MONGODB SETUP ---
+mongo = PyMongo(app)
 
 # --- GitHub OAuth Blueprint (Unchanged) ---
 github_bp = make_github_blueprint(
@@ -92,11 +66,9 @@ github_bp = make_github_blueprint(
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
-
 print("Starting background worker thread...")
 worker_thread = threading.Thread(target=process_jobs, daemon=True)
 worker_thread.start()
-
 
 # --- Standard Application Routes (Unchanged) ---
 
@@ -194,6 +166,9 @@ def upload():
     project_file = request.files.get("project")
     repo_name = request.form.get("repo_name")
     
+    # --- NEW: Get the checkbox value for private repository ---
+    is_private = request.form.get('is_private') == 'true'
+    
     if not project_file or not repo_name:
         flash("Missing project file or repository name.", "error")
         return redirect(url_for("dashboard"))
@@ -204,14 +179,12 @@ def upload():
 
     access_token = github.token["access_token"]
     
-    # Step 1: Securely save the uploaded file to a temporary directory on the server
     temp_dir = os.path.join(app.root_path, 'tmp', 'uploads')
     os.makedirs(temp_dir, exist_ok=True)
     filename = secure_filename(f"{session['github_user']['login']}_{repo_name}_{os.urandom(4).hex()}.zip")
     temp_filepath = os.path.join(temp_dir, filename)
     project_file.save(temp_filepath)
 
-    # Step 2: Create a job document in the MongoDB 'jobs' collection
     job_id = str(uuid.uuid4())
     job_document = {
         "_id": job_id,
@@ -220,11 +193,11 @@ def upload():
         "access_token": access_token,
         "temp_filepath": temp_filepath,
         "repo_name": repo_name,
+        "is_private": is_private, # <-- NEW: Save the privacy setting in the job
         "result": None
     }
     mongo.db.jobs.insert_one(job_document)
 
-    # Step 3: Immediately redirect the user to a new status page with the job's ID
     return redirect(url_for("upload_status", job_id=job_id))
 
 
