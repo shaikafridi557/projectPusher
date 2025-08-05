@@ -8,4 +8,6 @@ uuid
 gunicorn  # <-- Add this for production
 GitPython
 Flask-PyMongo 
-backoff  # <-- You were using this in an older version, make sure it's here
+backoff 
+dnspython
+certifi # <-- You were using this in an older version, make sure it's here
