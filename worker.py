@@ -1,29 +1,53 @@
+# background_worker.py (Enhanced Version with Better Error Handling)
+
 import time
 import os
+import stat
+import shutil
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# Load environment variables from .env file.
-# This is a critical step for accessing the database URI.
+# Load environment variables. This is important for the thread too.
 load_dotenv()
+
+def safe_file_remove(filepath):
+    """
+    Safely remove a file, handling Windows permission issues.
+    """
+    if not os.path.exists(filepath):
+        return True
+    
+    try:
+        # First attempt: normal removal
+        os.remove(filepath)
+        return True
+    except (OSError, IOError):
+        try:
+            # Second attempt: clear read-only and try again
+            os.chmod(filepath, stat.S_IWRITE)
+            os.remove(filepath)
+            return True
+        except (OSError, IOError):
+            # If we still can't delete it, just log and continue
+            print(f"Warning: Could not remove temporary file: {filepath}")
+            return False
 
 def get_mongo_collection():
     """Connects to MongoDB and returns the 'jobs' collection."""
     mongo_uri = os.environ.get("MONGO_URI")
     if not mongo_uri:
-        # This is a common setup error, so the message is made very clear.
-        raise ValueError("FATAL: MONGO_URI is not set in the environment. Please check your .env file.")
+        print("WORKER ERROR: MONGO_URI is not set.")
+        raise ValueError("FATAL: MONGO_URI is not set in the environment.")
         
-    print("Connecting to MongoDB...")
+    print("Connecting to MongoDB for worker...")
     client = MongoClient(mongo_uri)
     
-    # Test the connection to ensure the MongoDB server is running and accessible.
     try:
         client.admin.command('ping')
-        print("MongoDB connection successful.")
+        print("MongoDB connection for worker successful.")
     except Exception as e:
-        print(f"FATAL: Could not connect to MongoDB. Is the server running? Error: {e}")
-        raise  # Stop the script if a database connection cannot be established.
+        print(f"WORKER ERROR: Could not connect to MongoDB. Error: {e}")
+        raise
         
     db = client.get_default_database()
     return db.jobs
@@ -31,85 +55,92 @@ def get_mongo_collection():
 def process_jobs():
     """
     This function runs in an infinite loop, continuously checking MongoDB for new, queued jobs.
+    It's designed to be run in a background thread.
     """
     try:
         jobs_collection = get_mongo_collection()
-        print("Worker started. Looking for new jobs in MongoDB...")
+        print("Background worker thread started. Looking for new jobs...")
     except Exception as e:
-        # If the worker cannot even get a connection to the collection, it cannot start.
-        print(f"Worker could not start due to a setup error: {e}")
-        return  # Exit the function and stop the script.
+        print(f"Background worker could not start due to a setup error: {e}")
+        return # Exit the thread if DB connection fails
 
-    # We only import the function here, inside the function that uses it.
-    # This ensures that any changes to repo_utils are picked up if the worker restarts.
-    from utils.repo_utils import create_repo_from_zip
+    # ===================================================================
+    # This import statement is critical. It must get the updated function.
+    from utils.repo_utils import create_repo_from_zip_with_git
+    # ===================================================================
 
     while True:
         job = None
         try:
             # Atomically find a 'queued' job and update its status to 'processing'.
-            # This prevents multiple workers from picking up the same job.
             job = jobs_collection.find_one_and_update(
                 {"status": "queued"},
                 {
                     "$set": {
                         "status": "processing",
-                        # Set the initial progress state for the UI.
                         "progress": {"step": "Preparing to process...", "percentage": 0}
                     }
                 }
             )
 
             if job:
-                print(f"Found job {job['_id']}. Processing...")
+                # This log message is how we confirm the correct code is running.
+                print(f"Worker found job {job['_id']}. Processing with Git command-line method...")
 
-                # --- UPDATED FUNCTION CALL ---
-                # Pass the database collection and job ID to allow for real-time progress updates.
-                result = create_repo_from_zip(
-                    job["access_token"],
-                    job["temp_filepath"],
-                    job["repo_name"],
-                    jobs_collection,  # Argument 1: The collection object.
-                    job["_id"]          # Argument 2: The specific job's ID.
-                )
+                try:
+                    # ===================================================================
+                    # This function call is critical. It must call the updated function.
+                    result = create_repo_from_zip_with_git(
+                        job["access_token"],
+                        job["temp_filepath"],
+                        job["repo_name"],
+                        jobs_collection,
+                        job["_id"]
+                    )
+                    # ===================================================================
 
-                # Determine the final status based on the result from the processing function.
-                final_status = 'finished' if result.get('success') else 'failed'
-                jobs_collection.update_one(
-                    {"_id": job["_id"]},
-                    {"$set": {"status": final_status, "result": result}}
-                )
+                    final_status = 'finished' if result.get('success') else 'failed'
+                    jobs_collection.update_one(
+                        {"_id": job["_id"]},
+                        {"$set": {"status": final_status, "result": result}}
+                    )
+                    print(f"Job {job['_id']} finished with status: {final_status}")
 
-                print(f"Job {job['_id']} finished with status: {final_status}")
-            
+                except Exception as repo_error:
+                    # Handle errors from the repo creation function
+                    print(f"Error during repository creation for job {job['_id']}: {repo_error}")
+                    error_result = {"success": False, "error": f"Repository creation failed: {str(repo_error)}"}
+                    jobs_collection.update_one(
+                        {"_id": job["_id"]},
+                        {"$set": {"status": "failed", "result": error_result}}
+                    )
+
             else:
-                # If no job was found, wait for 5 seconds before checking again.
+                # If no job, wait for 5 seconds before checking again.
                 time.sleep(5)
 
         except Exception as e:
-            # This is a catch-all for any unexpected errors during the job processing loop.
             print(f"An unexpected error occurred in the worker loop: {e}")
             if job:
-                # If a job was being processed when the error occurred, mark it as 'failed'.
                 error_result = {"success": False, "error": f"A fatal worker process error occurred: {str(e)}"}
-                jobs_collection.update_one(
-                    {"_id": job["_id"]},
-                    {"$set": {"status": "failed", "result": error_result}}
-                )
-            # Wait longer after an error to prevent rapid-fire failure loops.
+                try:
+                    jobs_collection.update_one(
+                        {"_id": job["_id"]},
+                        {"$set": {"status": "failed", "result": error_result}}
+                    )
+                except Exception as db_error:
+                    print(f"Could not update job status in database: {db_error}")
             time.sleep(10)
 
         finally:
-            # This block ensures that the temporary zip file is always deleted,
-            # regardless of whether the job succeeded or failed.
+            # Enhanced cleanup with better error handling
             if job and job.get("temp_filepath"):
                 try:
                     if os.path.exists(job["temp_filepath"]):
-                        os.remove(job["temp_filepath"])
-                        print(f"Cleaned up temporary file: {job['temp_filepath']}")
+                        success = safe_file_remove(job["temp_filepath"])
+                        if success:
+                            print(f"Cleaned up temporary file: {job['temp_filepath']}")
+                        else:
+                            print(f"Partial cleanup - could not remove: {job['temp_filepath']}")
                 except Exception as e:
-                    # Log an error if cleanup fails, but don't stop the worker.
-                    print(f"Error during file cleanup for job {job['_id']}: {e}")
-
-if __name__ == '__main__':
-    process_jobs()
+                    print(f"Error during file cleanup for job {job.get('_id', 'unknown')}: {e}")
