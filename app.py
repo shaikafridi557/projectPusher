@@ -8,14 +8,9 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 from utils.repo_utils import move_or_copy_item
 import uuid
-# --- NEW IMPORTS ---
-import threading # To run the worker in the background
-from worker import process_jobs # Import the worker's main function
-
-# --- NEW IMPORTS FOR MONGODB ---
+import threading
+from worker import process_jobs # NOTE: This should be background_worker.py if you renamed it
 from flask_pymongo import PyMongo
-
-# --- YOUR EXISTING UTILS IMPORTS ---
 from utils.repo_utils import (
     create_repo_from_zip, 
     get_user_repos, 
@@ -29,36 +24,48 @@ from utils.repo_utils import (
     get_repo_languages
 )
 
-# This setting is the final fix for the OAuth scope warning
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
-# Load environment variables from a .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-# --- App Configuration (Updated for MongoDB) ---
+
+# =========================================================================
+# === ROBUST CONFIGURATION AND DIAGNOSTIC CHECK ===
+# We will now explicitly check for the MONGO_URI from the environment.
+# =========================================================================
+mongo_uri_from_env = os.environ.get("MONGO_URI")
+
+print("--- STARTUP DIAGNOSTICS ---")
+if mongo_uri_from_env:
+    print(f"SUCCESS: MONGO_URI environment variable found.")
+    # We won't print the full URI for security reasons, but we can print a part of it.
+    print(f"   URI starts with: {mongo_uri_from_env[:20]}...")
+else:
+    print("CRITICAL_ERROR: MONGO_URI environment variable was NOT FOUND.")
+    # Fallback to a default that we know will fail on Render, to make the error obvious.
+    mongo_uri_from_env = "mongodb://localhost:27017/this_will_fail_on_render"
+
 app.config.update(
     SECRET_KEY=os.environ.get("FLASK_SECRET_KEY"),
     SESSION_COOKIE_SAMESITE='Lax',
-    # --- NEW: MONGODB CONFIGURATION ---
-    # This reads the connection string from your .env file
-    MONGO_URI=os.environ.get("MONGO_URI")
+    MONGO_URI=mongo_uri_from_env # Use the variable we just checked and validated
 )
+
 # This is required for running behind a reverse proxy (common in production).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 if not app.config["SECRET_KEY"]:
     raise ValueError("FLASK_SECRET_KEY is not set in your environment.")
-if not app.config["MONGO_URI"]:
-    raise ValueError("MONGO_URI is not set in your environment.")
+
+# We remove the check for MONGO_URI here because we have already handled it robustly above.
+
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# --- NEW: MONGODB SETUP ---
 mongo = PyMongo(app)
 
-# --- GitHub OAuth Blueprint (Unchanged) ---
 github_bp = make_github_blueprint(
     client_id=os.environ.get("GITHUB_CLIENT_ID"),
     client_secret=os.environ.get("GITHUB_CLIENT_SECRET"),
@@ -66,9 +73,11 @@ github_bp = make_github_blueprint(
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
+
 print("Starting background worker thread...")
 worker_thread = threading.Thread(target=process_jobs, daemon=True)
 worker_thread.start()
+
 
 # --- Standard Application Routes (Unchanged) ---
 
