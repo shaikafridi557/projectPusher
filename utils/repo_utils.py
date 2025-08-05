@@ -8,8 +8,12 @@ import tempfile
 import concurrent.futures
 import glob
 import re
+
+# New imports for the Git command-line function
 import subprocess
 import stat
+
+# This library will handle automatic retries on API failures.
 import backoff
 
 # Centralized API URL for maintainability
@@ -59,64 +63,10 @@ def _github_api_request(method, url, token, json_data=None, success_status_code=
         raise e
 
 
-def remove_readonly(func, path, _):
+def create_repo_from_zip_with_git(access_token, zip_filepath, repo_name, is_private, jobs_collection, job_id):
     """
-    Error handler for Windows read-only files during directory removal.
-    This function is called by shutil.rmtree when it encounters permission errors.
-    """
-    try:
-        # Clear the read-only bit and try again
-        os.chmod(path, stat.S_IWRITE)
-        func(path)
-    except (OSError, IOError):
-        # If we still can't delete it, just ignore the error
-        # The main operation has already succeeded
-        pass
-
-
-def safe_rmtree(path):
-    print("Using enhanced safe_rmtree function")
-    """
-    Safely remove a directory tree, handling Windows permission issues.
-    """
-    if not os.path.exists(path):
-        return
-    
-    try:
-        # First attempt: normal removal
-        shutil.rmtree(path)
-    except (OSError, IOError):
-        try:
-            # Second attempt: with error handler for read-only files
-            shutil.rmtree(path, onerror=remove_readonly)
-        except (OSError, IOError):
-            # Final attempt: force removal of individual files
-            try:
-                for root, dirs, files in os.walk(path, topdown=False):
-                    for name in files:
-                        file_path = os.path.join(root, name)
-                        try:
-                            os.chmod(file_path, stat.S_IWRITE)
-                            os.remove(file_path)
-                        except (OSError, IOError):
-                            pass
-                    for name in dirs:
-                        dir_path = os.path.join(root, name)
-                        try:
-                            os.rmdir(dir_path)
-                        except (OSError, IOError):
-                            pass
-                # Remove the root directory
-                os.rmdir(path)
-            except (OSError, IOError):
-                # If all else fails, just ignore it
-                # The temp directory will be cleaned up by the system eventually
-                print(f"Warning: Could not fully clean up temporary directory: {path}")
-
-def create_repo_from_zip_with_git(access_token, zip_filepath, repo_name, jobs_collection, job_id):
-    """
-    Creates a GitHub repository by using the local Git command line for a fast and robust upload.
-    This version includes user-friendly error handling for secrets found by GitHub.
+    Creates a GitHub repository using Git commands. 
+    This version includes the 'is_private' flag and user-friendly error handling for secrets.
     """
     
     def update_progress(step, percentage):
@@ -152,7 +102,12 @@ def create_repo_from_zip_with_git(access_token, zip_filepath, repo_name, jobs_co
         update_progress("Creating remote repository on GitHub...", 60)
         user_response = _github_api_request("GET", f"{GITHUB_API_URL}/user", access_token)
         owner = user_response["data"]["login"]
-        repo_data = {"name": repo_name, "description": "Repository created via ProjectPusher"}
+        
+        repo_data = {
+            "name": repo_name,
+            "description": "Repository created via ProjectPusher",
+            "private": is_private
+        }
         repo_creation_response = _github_api_request("POST", f"{GITHUB_API_URL}/user/repos", access_token, json_data=repo_data)
         repo_url = repo_creation_response["data"]["html_url"]
         
@@ -161,35 +116,35 @@ def create_repo_from_zip_with_git(access_token, zip_filepath, repo_name, jobs_co
         subprocess.run(["git", "branch", "-M", "main"], check=True, cwd=tmpdir, capture_output=True)
         subprocess.run(["git", "remote", "add", "origin", remote_url], check=True, cwd=tmpdir, capture_output=True)
         
-        # =========================================================================
-        # === THIS IS THE NEW, IMPROVED ERROR HANDLING BLOCK ===
-        # =========================================================================
         try:
             subprocess.run(["git", "push", "-u", "origin", "main"], check=True, cwd=tmpdir, capture_output=True)
         except subprocess.CalledProcessError as e:
             error_output = e.stderr.decode()
-            # Check if the error is the specific "secret found" violation
             if "GH013: Repository rule violations" in error_output:
-                # Create a simple, user-friendly message
-                user_friendly_error = (
-                    "GitHub blocked this upload for your protection. "
-                    "A secret (like an API key or password) was found inside your project files. "
-                    "Please remove the secret, create a new .zip file, and try uploading again."
-                )
-                # We will still print the technical error to our own logs for debugging
-                print(f"Job {job_id} failed due to secrets detected by GitHub. Full error: {error_output}")
-                # We raise a new exception with the user-friendly message
+                match = re.search(r"path: (.*?):", error_output)
+                if match:
+                    file_path = match.group(1)
+                    user_friendly_error = (
+                        f"GitHub blocked this upload to protect you. A secret was found in the file: "
+                        f"<strong>{file_path}</strong>. <br><br> <strong>How to fix:</strong> "
+                        f"Replace the hardcoded key in your code with an environment variable (e.g., `os.environ.get(\"MY_SECRET\")`) "
+                        f"and store the actual key in a `.env` file. Then, create a new .zip and try again."
+                    )
+                else:
+                    user_friendly_error = (
+                        "GitHub blocked this upload for your protection. "
+                        "A secret (like an API key or password) was found inside your project files. "
+                        "Please remove the secret, create a new .zip file, and try uploading again."
+                    )
+                print(f"Job {job_id} failed due to secrets detected by GitHub.")
                 raise Exception(user_friendly_error)
             else:
-                # If it's a different git error, we re-raise it to be handled by the outer block
                 raise e
-        # =========================================================================
 
         update_progress("Upload complete!", 100)
         return {"success": True, "repo_url": repo_url, "repo_name": repo_name}
 
     except Exception as e:
-        # The user-friendly message will now be caught here
         error_message = str(e)
         print(f"An error occurred: {error_message}")
         if 'owner' in locals() and 'repo_name' in locals():
@@ -200,16 +155,16 @@ def create_repo_from_zip_with_git(access_token, zip_filepath, repo_name, jobs_co
                 print(f"Cleanup failed. Could not delete repository '{repo_name}'. Reason: {cleanup_exc}")
         return {"success": False, "error": error_message}
     finally:
-        # The robust cleanup logic remains the same
         def on_rm_error(func, path, exc_info):
             pass
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir, onerror=on_rm_error)
+
+
 # --- ORIGINAL API-BASED FUNCTION (kept for reference) ---
-def create_repo_from_zip(access_token, zip_filepath, repo_name, jobs_collection, job_id):
+def create_repo_from_zip(access_token, zip_filepath, repo_name, is_private, jobs_collection, job_id):
     """
-    Creates a GitHub repository from a ZIP file by first priming the repository
-    with an initial commit, then uploading all project files via the API.
+    (Legacy) Creates a GitHub repository via the API. Not recommended for large projects.
     """
     IGNORE_PATTERNS = [
         'node_modules', '__pycache__', 'venv', 'env', '.DS_Store',
@@ -228,7 +183,11 @@ def create_repo_from_zip(access_token, zip_filepath, repo_name, jobs_collection,
         user_response = _github_api_request("GET", f"{GITHUB_API_URL}/user", access_token)
         owner = user_response["data"]["login"]
         update_progress(f"Creating repository '{repo_name}' on GitHub...", 10)
-        repo_data = {"name": repo_name, "description": "Repository created via ProjectPusher", "private": False}
+        repo_data = {
+            "name": repo_name,
+            "description": "Repository created via ProjectPusher",
+            "private": is_private
+        }
         repo_creation_response = _github_api_request("POST", f"{GITHUB_API_URL}/user/repos", access_token, json_data=repo_data)
         repo_url = repo_creation_response["data"]["html_url"]
         update_progress("Priming repository with initial commit...", 15)
@@ -246,13 +205,9 @@ def create_repo_from_zip(access_token, zip_filepath, repo_name, jobs_collection,
         for pattern in IGNORE_PATTERNS:
             for path in glob.glob(os.path.join(tmpdir, '**', pattern), recursive=True):
                 try:
-                    if os.path.isdir(path): 
-                        safe_rmtree(path)
-                    elif os.path.isfile(path): 
-                        os.chmod(path, stat.S_IWRITE)
-                        os.remove(path)
-                except OSError: 
-                    pass
+                    if os.path.isdir(path): shutil.rmtree(path, onerror=on_rm_error)
+                    elif os.path.isfile(path): os.remove(path)
+                except OSError: pass
         gitignore_path = os.path.join(tmpdir, '.gitignore')
         if not os.path.exists(gitignore_path):
             with open(gitignore_path, 'w') as f: f.write(DEFAULT_GITIGNORE_CONTENT)
@@ -316,8 +271,10 @@ def create_repo_from_zip(access_token, zip_filepath, repo_name, jobs_collection,
                 print(f"Cleanup failed. Could not delete repository '{repo_name}'. Reason: {cleanup_exc}")
         return {"success": False, "error": error_message}
     finally:
-        # Use the safe cleanup function
-        safe_rmtree(tmpdir)
+        def on_rm_error(func, path, exc_info):
+            pass
+        if os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir, onerror=on_rm_error)
 
 
 # --- ALL OTHER HELPER FUNCTIONS (UNCHANGED) ---
