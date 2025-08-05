@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Upload - ProjectPusher</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --progress-bar-height: 0%; /* CSS variable for the progress bar */
+        }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; margin: 0; }
+        .status-container { background: white; border-radius: 24px; padding: 50px 40px; text-align: center; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); max-width: 500px; width: 100%; transition: all 0.3s ease; }
+        .status-icon { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 30px; transition: background-color 0.3s ease; }
+        .status-icon i { font-size: 36px; color: white; }
+        .spinner { animation: spin 1.2s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .status-title { font-size: 28px; font-weight: 700; color: #1f2937; margin-bottom: 16px; line-height: 1.2; }
+        
+        /* --- NEW PROGRESS BAR STYLES --- */
+        .progress-wrapper {
+            margin: 30px auto 30px;
+            width: 80%;
+            height: 20px;
+            background-color: #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-bar {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #818cf8, #6366f1);
+            transform: scaleY(var(--progress-bar-height));
+            transform-origin: bottom;
+            transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+        .status-message {
+            font-size: 16px; color: #6b7280; line-height: 1.6; min-height: 25px;
+            font-weight: 500;
+        }
+
+        .btn { padding: 14px 28px; border: none; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px; justify-content: center; }
+        .btn-primary { background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; }
+        .btn-secondary { background: white; color: #6b7280; border: 2px solid #e5e7eb; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
+        .error-details { margin-top: 20px; padding: 20px; background: #fef2f2; border-radius: 12px; border-left: 4px solid #ef4444; text-align: left; color: #991b1b; }
+        .error-details strong { color: #b91c1c; }
+    </style>
+</head>
+<body>
+    <div class="status-container" id="status-container">
+        <div class="status-icon" id="status-icon-wrapper" style="background-color: #6366f1;">
+            <i class="fas fa-rocket" id="status-icon"></i>
+        </div>
+        <h1 class="status-title" id="status-title">Launching Your Project...</h1>
+        
+        <!-- NEW PROGRESS BAR ELEMENT -->
+        <div class="progress-wrapper" id="progress-wrapper">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <p class="status-message" id="status-message">Please wait a moment, this page will update automatically.</p>
+        
+        <div id="action-buttons" style="display: none;"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const jobId = "{{ job_id }}";
+            const root = document.documentElement;
+            const iconWrapper = document.getElementById('status-icon-wrapper');
+            const icon = document.getElementById('status-icon');
+            const title = document.getElementById('status-title');
+            const message = document.getElementById('status-message');
+            const actionButtons = document.getElementById('action-buttons');
+            const progressWrapper = document.getElementById('progress-wrapper'); // Get the new element
+
+            function checkStatus() {
+                fetch(`/api/upload/status/${jobId}`)
+                    .then(response => response.ok ? response.json() : Promise.reject('Network response was not ok'))
+                    .then(data => {
+                        // --- NEW LOGIC TO UPDATE PROGRESS ---
+                        if (data.status === 'processing' && data.progress) {
+                            // Update the CSS variable, which smoothly animates the bar's height
+                            root.style.setProperty('--progress-bar-height', `${data.progress.percentage / 100}`);
+                            // Update the status message text
+                            message.textContent = data.progress.step;
+                        }
+
+                        if (data.status === 'finished') {
+                            clearInterval(pollingInterval);
+                            const result = data.result;
+                            if (result && result.success) {
+                                showSuccess(result);
+                            } else {
+                                showError(result || { error: 'Job finished but returned no result.' });
+                            }
+                        } else if (data.status === 'failed') {
+                            clearInterval(pollingInterval);
+                            showError(data.result || { error: 'The job failed unexpectedly.' });
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Error fetching job status:', err);
+                        clearInterval(pollingInterval);
+                        showError({ error: 'Could not connect to the server to check status.' });
+                    });
+            }
+
+            function showSuccess(result) {
+                progressWrapper.style.display = 'none'; // Hide the progress bar
+                iconWrapper.style.backgroundColor = '#10b981';
+                icon.className = 'fas fa-check';
+                title.textContent = 'Upload Successful!';
+                message.innerHTML = `Your repository <strong>${result.repo_name}</strong> is now live on GitHub.`;
+                actionButtons.innerHTML = `<a href="${result.repo_url}" class="btn btn-primary" target="_blank">View on GitHub</a> <a href="/dashboard" class="btn btn-secondary">Back to Dashboard</a>`;
+                actionButtons.style.display = 'flex';
+                actionButtons.style.gap = '16px';
+                actionButtons.style.justifyContent = 'center';
+            }
+
+            function showError(result) {
+                progressWrapper.style.display = 'none'; // Hide the progress bar
+                iconWrapper.style.backgroundColor = '#ef4444';
+                icon.className = 'fas fa-exclamation-triangle';
+                title.textContent = 'An Error Occurred';
+                message.innerHTML = `<div class="error-details"><strong>Details:</strong> ${result.error}</div>`;
+                actionButtons.innerHTML = `<a href="/dashboard" class="btn btn-primary">Back to Dashboard</a>`;
+                actionButtons.style.display = 'flex';
+                actionButtons.style.justifyContent = 'center';
+            }
+
+            // Check the status immediately on page load, then start the interval
+            checkStatus(); 
+            const pollingInterval = setInterval(checkStatus, 2000); // Check every 2 seconds for a snappier feel
+        });
+    </script>
+</body>
+</html>
