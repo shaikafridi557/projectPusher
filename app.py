@@ -66,7 +66,9 @@ github_bp = make_github_blueprint(
     redirect_to="github_login"
 )
 app.register_blueprint(github_bp, url_prefix="/login")
-
+print("Starting background worker thread...")
+worker_thread = threading.Thread(target=process_jobs, daemon=True)
+worker_thread.start()
 
 # --- Standard Application Routes (Unchanged) ---
 
@@ -128,22 +130,31 @@ def move_item_in_repo(repo_name):
 
     # If all operations in the loop succeeded
     return jsonify({"success": True})
+ 
+ 
 @app.route("/dashboard")
 def dashboard():
-    if not github.authorized or "github_user" not in session:
+    # 1. If the user isn't authorized at all, send them to the login page.
+    if not github.authorized:
         return redirect(url_for("home"))
-    
+
+    # 2. If authorized, but user data is not in the session, try to fetch it.
+    if "github_user" not in session:
+        resp = github.get("/user")
+        if resp.ok:
+            # If the fetch is successful, store the data in the session.
+            session["github_user"] = resp.json()
+        else:
+            # If fetching fails (e.g., token expired), clear the session and send to login.
+            session.clear()
+            flash("Could not fetch your GitHub profile. Please log in again.", "error")
+            return redirect(url_for("home"))
+
+    # 3. Now that we are sure the user data is in the session, proceed as normal.
     access_token = github.token["access_token"]
     repos = get_user_repos(access_token)
     
     return render_template("dashboard.html", user=session["github_user"], repos=repos)
-# This block will only run when the app is started by Gunicorn in production
-if __name__ != '__main__':
-    # Create a new thread object that will run the process_jobs function
-    worker_thread = threading.Thread(target=process_jobs, daemon=True)
-    # Start the thread
-    worker_thread.start()
-    print("Background worker thread started.")
 
 
 # --- MODIFIED /upload ROUTE FOR MONGODB ---
