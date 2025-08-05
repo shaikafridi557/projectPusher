@@ -1,4 +1,4 @@
-# background_worker.py (Enhanced Version with Better Error Handling)
+# background_worker.py (Updated to handle 'is_private' feature)
 
 import time
 import os
@@ -64,10 +64,7 @@ def process_jobs():
         print(f"Background worker could not start due to a setup error: {e}")
         return # Exit the thread if DB connection fails
 
-    # ===================================================================
-    # This import statement is critical. It must get the updated function.
     from utils.repo_utils import create_repo_from_zip_with_git
-    # ===================================================================
 
     while True:
         job = None
@@ -84,19 +81,27 @@ def process_jobs():
             )
 
             if job:
-                # This log message is how we confirm the correct code is running.
                 print(f"Worker found job {job['_id']}. Processing with Git command-line method...")
 
                 try:
                     # ===================================================================
-                    # This function call is critical. It must call the updated function.
+                    # === THIS IS THE MODIFIED FUNCTION CALL ===
+                    # ===================================================================
+                    
+                    # 1. Get the 'is_private' flag from the job document.
+                    #    Default to False if it's not present for any reason.
+                    is_private_job = job.get('is_private', False)
+                    
+                    # 2. Call the updated function with the new 'is_private_job' argument.
                     result = create_repo_from_zip_with_git(
                         job["access_token"],
                         job["temp_filepath"],
                         job["repo_name"],
+                        is_private_job, # <-- The new argument is passed here
                         jobs_collection,
                         job["_id"]
                     )
+                    
                     # ===================================================================
 
                     final_status = 'finished' if result.get('success') else 'failed'
